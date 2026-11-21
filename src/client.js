@@ -1733,7 +1733,11 @@ export function apply(ctx) {
           sourceForm.transport === 'local-dir' ? '本机目录路径' : sourceForm.transport === 'github-raw' ? '仓库名称（如 DDNdles/USTC-Question-Bank）' : '网络地址（含 manifest.json 的目录链接）'),
         h('input', {
           className: 'dsh-study-input', required: true,
-          placeholder: sourceForm.transport === 'local-dir' ? '例如：C:\\题库\\USTC-Question-Bank' : '例如：DDNdles/USTC-Question-Bank',
+          placeholder: sourceForm.transport === 'local-dir'
+            ? '例如：C:\\题库\\USTC-Question-Bank'
+            : sourceForm.transport === 'github-raw'
+              ? '例如：DDNdles/USTC-Question-Bank'
+              : '例如：https://git.ustc.edu.cn/zzl_stella05/USTC-Question-Bank/-/raw/main/',
           value: sourceForm.location,
           onChange: e => setSourceForm(c => ({ ...c, location: e.target.value })),
         })),
@@ -1764,7 +1768,7 @@ export function apply(ctx) {
                   setCheckedCourses(cur => cur.filter(x => x.source_id !== src.source_id))
                 },
               }, h(Icon.Download, { size: 14 }), `下载所选（${pickedForSrc.length}）`) : null,
-              src.source_id !== 'ustc-official' ? h('button', {
+              !['ustc-official', 'ustc-gitlab'].includes(src.source_id) ? h('button', {
                 type: 'button', className: 'dsh-study-icon-btn', title: '删除此题库源',
                 onClick: () => call('sourceRemove', { source_id: src.source_id }, '已删除题库源'),
               }, h(Icon.Trash2, { size: 14 })) : null)),

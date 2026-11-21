@@ -14,10 +14,18 @@ import {
 
 const OFFICIAL_SOURCE = {
   source_id: 'ustc-official',
-  name: '中科大公开题库',
+  name: '中科大公开题库（GitHub）',
   transport: 'github-raw',
   location: 'DDNdles/USTC-Question-Bank',
   ref: 'main',
+}
+
+const USTC_GITLAB_SOURCE = {
+  source_id: 'ustc-gitlab',
+  name: '中科大公开题库（USTC Git 镜像）',
+  transport: 'http-manifest',
+  location: 'https://git.ustc.edu.cn/zzl_stella05/USTC-Question-Bank/-/raw/main/',
+  ref: null,
 }
 
 function hash(content) {
@@ -62,11 +70,13 @@ export class SourceService {
       VALUES(?,?,?,?,?,?)
       ON CONFLICT(source_id) DO NOTHING
     `)
+    statement.run(USTC_GITLAB_SOURCE.source_id, USTC_GITLAB_SOURCE.name, USTC_GITLAB_SOURCE.transport,
+      USTC_GITLAB_SOURCE.location, USTC_GITLAB_SOURCE.ref, now)
     statement.run(OFFICIAL_SOURCE.source_id, OFFICIAL_SOURCE.name, OFFICIAL_SOURCE.transport,
       OFFICIAL_SOURCE.location, OFFICIAL_SOURCE.ref, now)
     statement.run('local-personal', '个人错题库', 'personal',
       path.join(this.dataDir, 'personal'), null, now)
-    this.db.prepare(`UPDATE sources SET name='中科大公开题库' WHERE source_id='ustc-official' AND name='USTC-Question-Bank'`).run()
+    this.db.prepare(`UPDATE sources SET name='中科大公开题库（GitHub）' WHERE source_id='ustc-official' AND name IN ('USTC-Question-Bank','中科大公开题库')`).run()
     this.db.prepare(`UPDATE sources SET name='个人错题库' WHERE source_id='local-personal' AND name='Personal mistakes'`).run()
     await fs.mkdir(path.join(this.dataDir, 'personal', 'courses'), { recursive: true })
     return this.list()
@@ -74,7 +84,7 @@ export class SourceService {
 
   remove(sourceId) {
     assertSourceId(sourceId)
-    if (sourceId === 'ustc-official' || sourceId === 'local-personal') {
+    if (sourceId === 'ustc-official' || sourceId === 'ustc-gitlab' || sourceId === 'local-personal') {
       throw new Error('内置题库源不可删除')
     }
     const changes = this.db.prepare('DELETE FROM sources WHERE source_id=?').run(sourceId).changes
@@ -424,6 +434,9 @@ export class SourceService {
 function ensureSlash(value) {
   const url = new URL(value)
   if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Source URL must use HTTP or HTTPS')
+  if (url.pathname.endsWith('/manifest.json')) {
+    url.pathname = url.pathname.slice(0, -'manifest.json'.length)
+  }
   if (!url.pathname.endsWith('/')) url.pathname += '/'
   return url
 }

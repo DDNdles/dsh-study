@@ -56,7 +56,7 @@
 
 ### 安装插件
 
-可直接从 [Releases](https://github.com/DDNdles/dsh-study/releases) 下载最新 `dsh-study-0.1.2.tgz`，或从源码自行构建：
+可直接从 [Releases](https://github.com/DDNdles/dsh-study/releases) 下载最新 `dsh-study-0.1.3.tgz`，或从源码自行构建：
 
 ```bash
 git clone https://github.com/DDNdles/dsh-study.git
@@ -69,12 +69,12 @@ npm pack
 **方式一：DeepSeek Harness 安装**
 
 ```bash
-dsh plugin add ./dsh-study-0.1.2.tgz
+dsh plugin add ./dsh-study-0.1.3.tgz
 ```
 
 **方式二：词元工坊安装**
 
-在词元工坊左侧或设置中打开「插件管理」，选择本地安装 `.tgz` 包（`dsh-study-0.1.2.tgz`）；或在桌面端完全退出后通过命令行写入 `desktop` profile。
+在词元工坊左侧或设置中打开「插件管理」，选择本地安装 `.tgz` 包（`dsh-study-0.1.3.tgz`）；或在桌面端完全退出后通过命令行写入 `desktop` profile。
 
 安装完成后，请从系统托盘**完全退出并重启客户端**：
 1. 在左侧边栏打开 **「学习」 → 「题库管理」**，按需勾选课程同步到本地即可离线使用。
@@ -101,8 +101,8 @@ dsh plugin add ./dsh-study-0.1.2.tgz
 插件采用开放的结构化题库协议 v1.0（JSON Schema 见 [schemas/](schemas/)），适用于大学各学科、中学、考研或个人笔记等任意题库。同步任意题库源时均执行 Schema 与 SHA-256 完整性校验，支持四种接入方式：
 
 - **本地目录**（离线导入个人或团队私有题库）
-- **GitHub 仓库**（当前默认暂预置一个公开示例源 [DDNdles/USTC-Question-Bank](https://github.com/DDNdles/USTC-Question-Bank)，支持自由增删与配置加速镜像）
-- **HTTP Manifest**（静态站点 / 对象存储托管）
+- **HTTP Manifest**（静态站点 / GitLab Raw / 对象存储托管，当前默认预置国内直连的 [USTC GitLab 镜像](https://git.ustc.edu.cn/zzl_stella05/USTC-Question-Bank)）
+- **GitHub 仓库**（同时预置公开示例源 [DDNdles/USTC-Question-Bank](https://github.com/DDNdles/USTC-Question-Bank)，支持自由增删与配置加速镜像）
 - **Git 仓库**
 
 ### 自建题库示例模板
