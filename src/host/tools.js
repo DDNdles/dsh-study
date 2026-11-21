@@ -171,6 +171,10 @@ export function registerTools(ctx, services) {
       confirmed: bool('仅在用户明确确认后传 true'),
     }, ['draft_id', 'confirmed'])],
     ['study_template_list', '查看内置及用户自定义的所有 PDF 与 PPT 导出模板。', object()],
+    ['study_env_check', '检测本机 LaTeX（xelatex）排版环境是否可用及自动安装进度。', object()],
+    ['study_env_install_latex', '自动下载并安装独立轻量 LaTeX 环境（TinyTeX + 中文试卷宏包）到插件数据目录；仅在用户明确确认安装后调用。', object({
+      confirmed: bool('仅在用户明确确认安装后传 true'),
+    }, ['confirmed'])],
     ['study_export_render', '将已保存试卷导出为 PDF（题目后解析或原题与答案分开）或讲评 PPTX。', object({
       paper_id: string('试卷 ID'),
       format: { type: 'string', enum: ['pdf', 'ppt'] },
@@ -253,6 +257,12 @@ async function execute(name, args, exec, services) {
       return { ok: true, data: papers.confirmVariant(args.draft_id) }
     case 'study_template_list':
       return { ok: true, data: await render.templates() }
+    case 'study_env_check':
+      return { ok: true, data: await services.latexEnv.detect(config.xelatexBin, signal) }
+    case 'study_env_install_latex':
+      assertUserConfirmation(exec, args.confirmed)
+      services.latexEnv.install({ mirrorBaseUrl: config.mirrorBaseUrl }).catch(() => {})
+      return { ok: true, data: await services.latexEnv.detect(config.xelatexBin, signal) }
     case 'study_export_render':
       return {
         ok: true,

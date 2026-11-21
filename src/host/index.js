@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import Schema from '@deepseek-ai/schemastery'
 import { createDatabase } from './db.js'
+import { LatexEnvService } from './latex-env.js'
 import { MistakeService } from './mistakes.js'
 import { PaperService } from './papers.js'
 import { RenderService } from './render.js'
@@ -61,12 +62,16 @@ export async function apply(ctx, input = {}) {
     db, allowAiVariants: config.allowAiVariants, excludeQuarantined: config.excludeQuarantined,
   })
   const base = fileURLToPath(new URL('../../', import.meta.url))
+  const latexEnv = new LatexEnvService({
+    dataDir: config.dataDir, subprocess: ctx.subprocess,
+    xelatexBin: config.xelatexBin, mirrorBaseUrl: config.mirrorBaseUrl,
+  })
   const render = new RenderService({
     db, dataDir: config.dataDir, xelatexBin: config.xelatexBin,
-    subprocess: ctx.subprocess, bundleRoot: base,
+    subprocess: ctx.subprocess, bundleRoot: base, latexEnv,
   })
   await sources.initialize()
-  const services = { db, sources, mistakes, papers, render, config }
+  const services = { db, sources, mistakes, papers, render, latexEnv, config }
 
   ctx.effect(() => () => db.close())
   registerTools(ctx, services)
@@ -217,6 +222,15 @@ export async function apply(ctx, input = {}) {
           return { ok: true, data: papers.confirmVariant(payload.draft_id) }
         case 'templateList':
           return { ok: true, data: await render.templates() }
+        case 'envCheck':
+          return { ok: true, data: await latexEnv.detect(config.xelatexBin, signal) }
+        case 'envInstallLatex': {
+          const current = await latexEnv.detect(config.xelatexBin, signal)
+          if (current.available) return { ok: true, data: current }
+          // 异步后台安装，立即返回进度状态，避免长下载触发 RPC 超时
+          latexEnv.install({ mirrorBaseUrl: payload.mirrorBaseUrl || config.mirrorBaseUrl }).catch(() => {})
+          return { ok: true, data: await latexEnv.detect(config.xelatexBin, signal) }
+        }
         case 'exportRender':
           return { ok: true, data: await render.render(payload, signal) }
         case 'quickExport': {
@@ -319,7 +333,7 @@ function isMutation(endpoint) {
     'mistakeDraft', 'mistakeDraftDismiss', 'mistakeCommit', 'mistakeReview',
     'paperAssembleMistakes', 'paperAssemble', 'paperAssembleCustom', 'paperDelete',
     'paperCommentUpdate', 'variantPropose', 'variantCommit',
-    'exportRender', 'quickExport', 'paperItemsUpdate',
+    'exportRender', 'quickExport', 'paperItemsUpdate', 'envInstallLatex',
   ]).has(endpoint)
 }
 

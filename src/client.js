@@ -238,6 +238,8 @@ const STYLE = `
 .dsh-study-banner.err{background:rgba(192,28,40,.08);color:var(--s-danger);border:1px solid rgba(192,28,40,.2)}
 .dsh-study-banner.info{background:var(--s-surface);color:var(--s-text);border:1px solid var(--s-border)}
 .dsh-study-banner.ok{background:rgba(21,128,61,.08);color:var(--s-ok);border:1px solid rgba(21,128,61,.2)}
+.dsh-study-progress{height:4px;border-radius:999px;background:var(--s-border);overflow:hidden;width:100%}
+.dsh-study-progress-fill{height:100%;background:var(--s-brand);transition:width .25s ease}
 
 .dsh-study-frame{
   width:100%;flex:1;min-height:460px;border:1px solid var(--s-border);
@@ -976,6 +978,7 @@ export function apply(ctx) {
     const [slideIndex, setSlideIndex] = useState(0)
     const [editingPaper, setEditingPaper] = useState(false)
     const [editableItems, setEditableItems] = useState([])
+    const [latexEnv, setLatexEnv] = useState(null)
 
     // ---- 题库与错题 ----
     const [bankSubTab, setBankSubTab] = useState('browse') // 'browse' | 'mistakes'
@@ -1031,6 +1034,42 @@ export function apply(ctx) {
         setMistakeForm(cur => ({ ...cur, course_code: installedCourses[0].code }))
       }
     }, [installedCourses])
+
+    // 自动检测本机或插件托管的 LaTeX（xelatex）环境；安装中则轮询进度
+    useEffect(() => {
+      let live = true
+      rpc(ctx, 'envCheck').then(info => {
+        if (live) setLatexEnv(info)
+      }).catch(() => {})
+      return () => { live = false }
+    }, [])
+
+    useEffect(() => {
+      if (!latexEnv?.installing) return undefined
+      let live = true
+      const timer = setInterval(() => {
+        rpc(ctx, 'envCheck').then(info => {
+          if (live) setLatexEnv(info)
+        }).catch(() => {})
+      }, 1200)
+      return () => {
+        live = false
+        clearInterval(timer)
+      }
+    }, [latexEnv?.installing])
+
+    const startInstallLatex = useCallback(async () => {
+      try {
+        const info = await rpc(ctx, 'envInstallLatex', {})
+        setLatexEnv(info)
+      } catch (error) {
+        setLatexEnv(cur => ({
+          ...(cur ?? { available: false }),
+          installing: false,
+          error: friendlyError(error),
+        }))
+      }
+    }, [])
 
     // 首次进入导出历史时加载最近一条导出用于预览
     useEffect(() => {
@@ -1208,7 +1247,14 @@ export function apply(ctx) {
             }, isPpt ? '同卷生成 PDF' : '同卷生成 PPT') : null)),
 
         activeExport.degraded_reason
-          ? h('div', { className: 'dsh-study-banner info', style: { marginBottom: 0 } }, activeExport.degraded_reason)
+          ? h('div', { className: 'dsh-study-banner info', style: { marginBottom: 0 } },
+            h('span', null, activeExport.degraded_reason),
+            latexEnv && !latexEnv.available && !latexEnv.installing
+              ? h('button', {
+                type: 'button', className: 'dsh-study-btn sm primary',
+                onClick: startInstallLatex,
+              }, h(Icon.Download, { size: 14 }), '一键安装 LaTeX')
+              : null)
           : null,
 
         isPpt
@@ -1377,6 +1423,27 @@ export function apply(ctx) {
                   onChange: e => setAdvFilter(c => ({ ...c, showBindingLine: e.target.checked })),
                 }),
                 h('span', null, '奇数页绘制左侧密封装订线')) : null) : null),
+
+          latexEnv && (!latexEnv.available || latexEnv.installing)
+            ? h('div', { className: 'dsh-study-soft dsh-study-stack', style: { gap: 8 } },
+              latexEnv.installing
+                ? h(React.Fragment, null,
+                  h('div', { className: 'dsh-study-between', style: { fontSize: 12.5 } },
+                    h('span', null, latexEnv.detail || '正在安装轻量 LaTeX 环境…'),
+                    h('span', { className: 'dsh-study-muted' }, `${latexEnv.percent || 0}%`)),
+                  h('div', { className: 'dsh-study-progress' },
+                    h('div', { className: 'dsh-study-progress-fill', style: { width: `${Math.max(4, Math.min(100, latexEnv.percent || 4))}%` } })))
+                : h(React.Fragment, null,
+                  h('div', { className: 'dsh-study-between', style: { gap: 10 } },
+                    h('span', { style: { fontSize: 12.5 } }, '未检测到 LaTeX，导出 PDF 需安装轻量排版环境（约 70 MB）'),
+                    h('button', {
+                      type: 'button', className: 'dsh-study-btn sm primary',
+                      onClick: startInstallLatex,
+                    }, h(Icon.Download, { size: 13 }), '一键安装')),
+                  latexEnv.error
+                    ? h('div', { style: { fontSize: 12, color: 'var(--s-danger)' } }, latexEnv.error)
+                    : null))
+            : null,
 
           h('div', { className: 'dsh-study-stack', style: { marginTop: 4 } },
             h('button', {

@@ -11,6 +11,7 @@ import { SVG } from 'mathjax-full/js/output/svg.js'
 import { liteAdaptor } from 'mathjax-full/js/adaptors/liteAdaptor.js'
 import { RegisterHTMLHandler } from 'mathjax-full/js/handlers/html.js'
 import { runProcess } from './process.js'
+import { LatexEnvService } from './latex-env.js'
 
 const adaptor = liteAdaptor()
 RegisterHTMLHandler(adaptor)
@@ -50,12 +51,13 @@ const templateDefaults = [
 const MATH_SPLIT_RE = /(\$\$[\s\S]+?\$\$|\$[^$\n]+\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g
 
 export class RenderService {
-  constructor({ db, dataDir, xelatexBin = 'xelatex', subprocess, bundleRoot }) {
+  constructor({ db, dataDir, xelatexBin = 'xelatex', subprocess, bundleRoot, latexEnv }) {
     this.db = db
     this.dataDir = dataDir
     this.xelatexBin = xelatexBin
     this.subprocess = subprocess
     this.bundleRoot = bundleRoot
+    this.latexEnv = latexEnv ?? new LatexEnvService({ dataDir, subprocess, xelatexBin })
     this.exportsRoot = path.join(dataDir, 'exports')
   }
 
@@ -264,12 +266,15 @@ export class RenderService {
 
   async compileTex(texPath, cwd, signal) {
     if (!this.subprocess) return { ok: false, reason: '本地排版进程服务不可用，已切换为可打印网页版', log: '' }
-    let executable
-    try {
-      executable = await this.subprocess.resolveExecutable(this.xelatexBin, undefined, signal)
-    } catch {
-      return { ok: false, reason: '未检测到本机 xelatex，已自动导出可打印网页版与 LaTeX 源码', log: '' }
+    const detected = await this.latexEnv.detect(this.xelatexBin, signal)
+    if (!detected.available || !detected.executable) {
+      return { ok: false, reason: '未检测到本机 xelatex，可点击「一键安装」部署轻量 LaTeX 环境，当前已提供可打印网页版', log: '' }
     }
+    const executable = detected.executable
+    const binDir = path.dirname(executable)
+    const env = (binDir && binDir !== '.')
+      ? { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` }
+      : undefined
     let log = ''
     try {
       for (let pass = 0; pass < 2; pass++) {
@@ -277,7 +282,7 @@ export class RenderService {
         const result = await runProcess(this.subprocess, [
           executable, '-no-shell-escape', '-halt-on-error', '-interaction=nonstopmode',
           '-file-line-error', path.basename(texPath),
-        ], { cwd, signal, timeoutMs: 60_000, check: false })
+        ], { cwd, env, signal, timeoutMs: 60_000, check: false })
         log += `${result.stdout}\n${result.stderr}`
         if (result.exitCode !== 0) return { ok: false, reason: `LaTeX 编译未通过（第 ${pass + 1} 遍），已提供可打印网页版`, log }
       }

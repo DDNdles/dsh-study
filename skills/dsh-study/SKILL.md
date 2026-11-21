@@ -32,6 +32,7 @@ description: 学习与出卷助手（大模型协作通道）：结合已安装�
 4. **导出与交付**：
    - 调用 `study_export_render` 生成 PDF（默认模板 `ustc-exam`「中科大标准考试卷」，可选 `gaokao`「高考标准考试卷」；支持 `mode: "inline-solution"` 题目后解析版，或 `mode: "split"` 原题与答案分开版）和/或 PPT（`format: "ppt", template_id: "review-classic"`）。
    - 向用户汇报清晰的中文结果：试卷标题、题量与总分、导出状态（如本机无 `xelatex` 降级为可打印网页版须如实说明），并附上生成的预览/下载链接，提示也可在左侧「学习」面板直接预览。
+   - 如需检测或补装 PDF 排版环境，可调用 `study_env_check` 查看状态；仅在用户明确确认后，才调用 `study_env_install_latex`（`confirmed: true`）自动安装插件独立托管的轻量 TinyTeX（无需管理员权限，安装完成后重渲染即可得到正式 PDF）。
 
 ### 4. 可选 AI 变式题边界
 - 默认禁止 AI 生成变式题；仅当全局设置已开启且用户明确要求用 AI 补充变式题时，才调用 `study_paper_variant_propose` 暂存，明确标示为 AI 变式并等待用户确认后再调用 `study_paper_variant_commit`。

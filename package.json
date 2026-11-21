@@ -1,7 +1,7 @@
 {
   "name": "dsh-study",
-  "version": "0.1.1",
-  "description": "Question-bank, mistake-review, paper assembly, and export workspace for DeepSeek Harness",
+  "version": "0.1.2",
+  "description": "Question-bank, mistake-review, paper assembly, and export workspace for DeepSeek Harness & TokenWorks",
   "type": "module",
   "main": "./dist/host/index.js",
   "exports": {

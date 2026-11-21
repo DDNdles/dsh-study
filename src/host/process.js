@@ -1,5 +1,5 @@
 export async function runProcess(subprocess, argv, {
-  cwd, signal, timeoutMs = 60_000, check = true,
+  cwd, env, signal, timeoutMs = 60_000, check = true,
 } = {}) {
   if (!subprocess) throw new Error('DSH subprocess service is unavailable')
   const controller = new AbortController()
@@ -13,6 +13,7 @@ export async function runProcess(subprocess, argv, {
     handle = subprocess.spawn({
       argv,
       cwd,
+      ...(env ? { env } : {}),
       stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
       graceMs: 2_000,
       signal: controller.signal,

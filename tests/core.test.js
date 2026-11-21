@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createDatabase, getQuestion } from '../src/host/db.js'
+import { LatexEnvService } from '../src/host/latex-env.js'
 import { MistakeService, scheduleReview } from '../src/host/mistakes.js'
 import { PaperService } from '../src/host/papers.js'
 import { RenderService } from '../src/host/render.js'
@@ -444,4 +445,37 @@ test('bundled examples/sample-bank imports cleanly with schema and SHA-256 verif
   assert.equal(tax.length, 5)
   const found = searchQuestions(db, papers, { source_ids: ['sample-bank'], course_codes: ['DEMO101'], limit: 10 })
   assert.equal(found.length, 3)
+})
+
+test('LatexEnvService detects managed TinyTeX when PATH lacks xelatex and respects custom missing bin', async t => {
+  const { directory } = await setup(t)
+  const noPathSubprocess = {
+    async resolveExecutable() {
+      throw new Error('not found in PATH')
+    },
+  }
+  const envSvc = new LatexEnvService({ dataDir: directory, subprocess: noPathSubprocess })
+
+  // Custom missing binary must stay unavailable (preserves degraded fallback)
+  const missingCustom = await envSvc.detect('dsh-study-missing-xelatex')
+  assert.equal(missingCustom.available, false)
+
+  // Simulated managed TinyTeX binary inside <dataDir>/runtime/TinyTeX/bin/<arch>/
+  const exeName = process.platform === 'win32' ? 'xelatex.exe' : 'xelatex'
+  const archDir = process.platform === 'win32' ? 'windows' : 'x86_64-linux'
+  const managedBin = path.join(directory, 'runtime', 'TinyTeX', 'bin', archDir, exeName)
+  await fs.mkdir(path.dirname(managedBin), { recursive: true })
+  await fs.writeFile(managedBin, 'stub')
+  if (process.platform !== 'win32') await fs.chmod(managedBin, 0o755)
+
+  const foundManaged = await envSvc.detect('xelatex')
+  assert.equal(foundManaged.available, true)
+  assert.equal(foundManaged.source, 'managed')
+  assert.equal(foundManaged.executable, managedBin)
+
+  // Explicit absolute path detection
+  const foundExplicit = await envSvc.detect(managedBin)
+  assert.equal(foundExplicit.available, true)
+  assert.equal(foundExplicit.source, 'configured')
+  assert.equal(foundExplicit.executable, managedBin)
 })

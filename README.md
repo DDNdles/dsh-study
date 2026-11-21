@@ -11,6 +11,13 @@
   <a href="src/host/db.js"><img alt="SQLite FTS5" src="https://img.shields.io/badge/sqlite-FTS5-3A7BE0?style=flat-square&labelColor=24292F&logo=sqlite&logoColor=white" /></a>
 </p>
 <p>
+  <img alt="DeepSeek Harness" src=".github/assets/logo-dsh.png" width="22" height="22" align="absmiddle" />
+  &nbsp;<strong>DeepSeek Harness</strong>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <img alt="词元工坊" src=".github/assets/logo-tokenworks.png" width="22" height="22" align="absmiddle" />
+  &nbsp;<strong>词元工坊（TokenWorks）</strong>
+</p>
+<p>
   <a href="#双通道架构">01 双通道架构</a> &nbsp;&nbsp;
   <a href="#安装与使用">02 安装与使用</a> &nbsp;&nbsp;
   <a href="#模板与导出">03 模板与导出</a> &nbsp;&nbsp;
@@ -19,7 +26,7 @@
 </p>
 </div>
 
-面向 **DeepSeek Harness (DSH)** 的**通用双通道刷题、错题复盘与试卷 / PPT 生成插件**。适配任意学科的本地私有题库、GitHub 仓库或 HTTP 题库源，支持零大模型一键点选直出，也支持通过 `/study` 斜杠指令与大模型深度协作（自然语言精准出卷、拍照/文字录错题、撰写针对性红字点评与讲评课件）。
+面向 **DeepSeek Harness (DSH)** 与 **词元工坊（TokenWorks）** 的**通用双通道刷题、错题复盘与试卷 / PPT 生成插件**。适配任意学科的本地私有题库、GitHub 仓库或 HTTP 题库源，支持零大模型一键点选直出，也支持通过 `/study` 斜杠指令与大模型深度协作（自然语言精准出卷、拍照/文字录错题、撰写针对性红字点评与讲评课件）。
 
 > **数据与版权边界**：插件本身采用 [MIT License](LICENSE)，**不内置任何课程真题或题库数据**。所有题库均由用户在运行时按需接入或同步（默认暂预置一个公开示例源 [DDNdles/USTC-Question-Bank](https://github.com/DDNdles/USTC-Question-Bank)，同时随包附带最小自建题库模板 [examples/sample-bank/](examples/sample-bank/)），经 Schema 与 SHA-256 校验后存储于本机独立数据目录。
 
@@ -33,7 +40,7 @@
 | **通道二：大模型协作助手** | 对话输入框 `/study` | **深度协作** | 自然语言定制出卷、分析薄弱点、文字/截图录错题（草稿确认后入库）、为每道题撰写红字易错点评并导出 PDF / PPT |
 
 - 两条通道共用同一套本地 SQLite FTS5 索引、SM-2 复习调度与 PDF / PPT 渲染引擎。
-- `/study` 弹出快捷菜单（智能定制出卷、录入错题、错题复盘与巩固出卷、制作讲评 PPT、查看本地题库状态、打开「学习」工作台），背后静默注入协作规范并暴露 23 个 `study_*` 原生工具，不向 `/` 技能区增加多余噪音。
+- `/study` 弹出快捷菜单（智能定制出卷、录入错题、错题复盘与巩固出卷、制作讲评 PPT、查看本地题库状态、打开「学习」工作台），背后静默注入协作规范并暴露 25 个 `study_*` 原生工具，不向 `/` 技能区增加多余噪音。
 
 <img alt="02" src=".github/assets/route-02.svg" width="100%" />
 
@@ -43,11 +50,13 @@
 
 | 依赖 | 要求 | 说明 |
 | --- | --- | --- |
-| DeepSeek Harness | `>= 0.2.2-rc.1 < 0.3.0` | 插件宿主环境 |
+| <img alt="DSH" src=".github/assets/logo-dsh.png" width="16" height="16" align="absmiddle" /> DeepSeek Harness / <img alt="词元工坊" src=".github/assets/logo-tokenworks.png" width="16" height="16" align="absmiddle" /> 词元工坊 | `>= 0.2.2-rc.1 < 0.3.0` | 同时兼容 DeepSeek Harness 与词元工坊桌面端 |
 | Node.js | `>= 24.0.0` | 使用内置 `node:sqlite`（含 FTS5） |
-| XeLaTeX（可选） | TeX Live / MiKTeX | 用于编译 PDF 试卷；未安装时自动降级保留 `.tex` 源码与可打印网页版（KaTeX） |
+| XeLaTeX（可选 · 支持一键自动安装） | TeX Live / MiKTeX / 内置 TinyTeX | 启动自动检测本机与常见安装路径；若未安装，可在工作台点击「一键安装」自动部署轻量 TinyTeX 及中文/试卷宏包（约 70 MB，免管理员权限），也可降级导出可打印网页版（KaTeX） |
 
-### 构建与安装
+### 安装插件
+
+可直接从 [Releases](https://github.com/DDNdles/dsh-study/releases) 下载最新 `dsh-study-0.1.2.tgz`，或从源码自行构建：
 
 ```bash
 git clone https://github.com/DDNdles/dsh-study.git
@@ -57,15 +66,20 @@ npm run verify
 npm pack
 ```
 
-将生成的 `dsh-study-0.1.0.tgz` 添加到 DSH：
+**方式一：DeepSeek Harness 安装**
 
 ```bash
-dsh plugin add ./dsh-study-0.1.0.tgz
+dsh plugin add ./dsh-study-0.1.2.tgz
 ```
 
-安装完成后重启 DSH：
+**方式二：词元工坊安装**
+
+在词元工坊左侧或设置中打开「插件管理」，选择本地安装 `.tgz` 包（`dsh-study-0.1.2.tgz`）；或在桌面端完全退出后通过命令行写入 `desktop` profile。
+
+安装完成后，请从系统托盘**完全退出并重启客户端**：
 1. 在左侧边栏打开 **「学习」 → 「题库管理」**，按需勾选课程同步到本地即可离线使用。
-2. 在 **「快速出卷」** 直接点选课程、题量与模板一键生成并预览 PDF / PPT；或在对话中输入 `/study` 让大模型协作定制。
+2. 若本机尚未安装 LaTeX，「快速出卷」面板会自动提示并支持点击 **「一键安装」** 部署轻量排版环境。
+3. 在 **「快速出卷」** 直接点选课程、题量与模板一键生成并预览 PDF / PPT；或在对话中输入 `/study` 让大模型协作定制。
 
 <img alt="03" src=".github/assets/route-03.svg" width="100%" />
 
@@ -117,8 +131,9 @@ dsh-study/
 │       ├── sources.js            # 多源拉取、Schema 校验与 SHA-256 增量同步
 │       ├── mistakes.js           # 错题本、草稿确认门控与 SM-2 复习调度
 │       ├── papers.js             # 条件组卷、自定义挑题、分值/顺序调整与点评更新
+│       ├── latex-env.js          # XeLaTeX 多路径自动检测与轻量 TinyTeX 一键安装
 │       ├── render.js             # XeLaTeX PDF / 可打印 HTML / PPTX + MathJax 矢量混排引擎
-│       └── tools.js              # 23 个 study_* 原生大模型工具
+│       └── tools.js              # 25 个 study_* 原生大模型工具
 ├── templates/
 │   ├── pdf/{ustc-exam,gaokao}/   # 内置 PDF 试卷 LaTeX 模板
 │   └── ppt/review-classic/       # 内置讲评 PPT 模板、素雅底图、极简图标与 OFL 静态字体
@@ -126,11 +141,11 @@ dsh-study/
 ├── skills/dsh-study/SKILL.md     # 通道二大模型协作规范
 ├── examples/sample-bank/         # 自建题库最小原创模板与 SHA-256 刷新脚本
 ├── scripts/build.mjs             # esbuild 打包脚本
-└── tests/core.test.js            # 8 项端到端核心单测（同步、校验、错题、组卷、PDF/PPT 渲染）
+└── tests/core.test.js            # 9 项端到端核心单测（同步、校验、错题、组卷、LaTeX 检测、PDF/PPT 渲染）
 ```
 
 <details>
-<summary>展开查看 23 个内置大模型工具（study_*）一览</summary>
+<summary>展开查看 25 个内置大模型工具（study_*）一览</summary>
 
 | 分类 | 工具名 | 作用 |
 | --- | --- | --- |
@@ -142,5 +157,6 @@ dsh-study/
 | 试卷维护 | `study_paper_get` / `study_paper_list` / `study_paper_items_update` / `study_paper_comment_update` | 读取试卷、调整顺序与分值、撰写针对性红字点评 |
 | AI 变式门控 | `study_paper_variant_propose` / `study_paper_variant_commit` | 默认关闭；显式开启并确认后方可写入 AI 变式题 |
 | 模板与导出 | `study_template_list` / `study_export_render` | 列出内置/自定义模板并导出 PDF、HTML 或 PPTX |
+| 环境依赖 | `study_env_check` / `study_env_install_latex` | 自动检测本机/托管 `xelatex` 状态，经用户确认后一键安装轻量 TinyTeX |
 
 </details>
