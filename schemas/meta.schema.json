@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/DDNdles/USTC-Question-Bank/schema/meta.schema.json",
+  "title": "USTC Question Bank Course Meta",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "code",
+    "name",
+    "name_en",
+    "department",
+    "category",
+    "description",
+    "stats",
+    "batches",
+    "known_notes",
+    "files",
+    "sha256"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "code": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "name_en": { "type": "string" },
+    "department": { "type": "string" },
+    "category": { "type": "string" },
+    "description": { "type": "string" },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "quarantined",
+        "taxonomy_nodes",
+        "by_origin",
+        "by_type",
+        "by_difficulty",
+        "exam_years"
+      ],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "quarantined": { "type": "integer", "minimum": 0 },
+        "taxonomy_nodes": { "type": "integer", "minimum": 0 },
+        "by_origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["official", "community", "ai"],
+          "properties": {
+            "official": { "type": "integer", "minimum": 0 },
+            "community": { "type": "integer", "minimum": 0 },
+            "ai": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "by_type": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "by_difficulty": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["1", "2", "3", "4", "5"],
+          "properties": {
+            "1": { "type": "integer", "minimum": 0 },
+            "2": { "type": "integer", "minimum": 0 },
+            "3": { "type": "integer", "minimum": 0 },
+            "4": { "type": "integer", "minimum": 0 },
+            "5": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "exam_years": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "count", "rights", "description"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "count": { "type": "integer", "minimum": 0 },
+          "rights": {
+            "type": "string",
+            "enum": [
+              "original",
+              "third_party_exam",
+              "third_party_textbook",
+              "third_party_notes",
+              "third_party_community",
+              "third_party_textbook_and_community"
+            ]
+          },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "known_notes": { "type": "array", "items": { "type": "string" } },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questions", "taxonomy"],
+      "properties": {
+        "questions": { "type": "string", "minLength": 1 },
+        "taxonomy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sha256": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questions", "taxonomy"],
+      "properties": {
+        "questions": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "taxonomy": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

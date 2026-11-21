@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "course_code": "DEMO101",
+  "nodes": [
+    {
+      "id": "demo.limit",
+      "parent_id": null,
+      "level": 1,
+      "name": "第 1 章 极限与连续",
+      "chapter_ref": "Ch.1"
+    },
+    {
+      "id": "demo.limit.calc",
+      "parent_id": "demo.limit",
+      "level": 2,
+      "name": "重要极限与等价无穷小",
+      "chapter_ref": "1.1"
+    },
+    {
+      "id": "demo.calc",
+      "parent_id": null,
+      "level": 1,
+      "name": "第 2 章 导数与定积分",
+      "chapter_ref": "Ch.2"
+    },
+    {
+      "id": "demo.calc.deriv",
+      "parent_id": "demo.calc",
+      "level": 2,
+      "name": "导数定义与复合求导",
+      "chapter_ref": "2.1"
+    },
+    {
+      "id": "demo.calc.integral",
+      "parent_id": "demo.calc",
+      "level": 2,
+      "name": "分部积分与定积分计算",
+      "chapter_ref": "2.2"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/DDNdles/USTC-Question-Bank/schema/taxonomy.schema.json",
+  "title": "USTC Question Bank Course Taxonomy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "course_code", "nodes"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "course_code": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "parent_id", "level", "name", "chapter_ref"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parent_id": {
+            "type": ["string", "null"]
+          },
+          "level": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "chapter_ref": {
+            "type": ["string", "null"]
+          }
+        }
+      }
+    }
+  }
+}

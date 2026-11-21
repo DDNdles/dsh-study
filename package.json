@@ -1,0 +1,70 @@
+{
+  "name": "dsh-study",
+  "version": "0.1.0",
+  "description": "Question-bank, mistake-review, paper assembly, and export workspace for DeepSeek Harness",
+  "type": "module",
+  "main": "./dist/host/index.js",
+  "exports": {
+    ".": "./dist/host/index.js",
+    "./client": "./dist/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "templates",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "package.json",
+    "README.md",
+    "skills",
+    "examples"
+  ],
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "test": "node --test ./tests/*.test.js",
+    "verify": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1 <0.3.0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.2-rc.1 <0.3.0",
+    "@deepseek-ai/schemastery": ">=3.18.0 <4.0.0",
+    "react": ">=18.0.0 <20.0.0"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "ajv": "^8.17.1",
+    "katex": "^0.16.22",
+    "lucide-react": "^0.468.0",
+    "mathjax-full": "^3.2.2",
+    "pptxgenjs": "^4.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.0"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-commands",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

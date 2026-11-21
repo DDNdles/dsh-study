@@ -1,0 +1,17 @@
+{
+  "id": "review-classic",
+  "kind": "ppt",
+  "name": "经典讲评 PPT",
+  "description": "16:9 宽屏，流线型进度轨道与素雅底纹；封面 + 每题作答页与解析页，公式矢量清晰排版",
+  "engine": "pptxgenjs",
+  "theme": {
+    "background": "FAF9F5",
+    "text": "15181E",
+    "body": "2B2F36",
+    "accent": "1F5FC9",
+    "highlight": "B45309",
+    "muted": "6B6F76",
+    "border": "DAD7CE",
+    "railMuted": "B9B6AC"
+  }
+}

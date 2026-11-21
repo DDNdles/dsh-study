@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tgz
+*.log
+.DS_Store
+Thumbs.db
+
+# Local development & planning scratch
+.agents/
+verification/
+PLAN.md
+grill-me-with-md.md

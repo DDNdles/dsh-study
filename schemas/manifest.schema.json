@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/DDNdles/USTC-Question-Bank/schema/manifest.schema.json",
+  "title": "USTC Question Bank Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "schema_version",
+    "data_version",
+    "updated_at",
+    "repository",
+    "asset_base_url",
+    "license",
+    "stats",
+    "courses"
+  ],
+  "properties": {
+    "name": { "type": "string" },
+    "schema_version": { "type": "string", "const": "1.0" },
+    "data_version": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "repository": { "type": "string" },
+    "asset_base_url": {
+      "type": ["string", "null"],
+      "description": "Optional external CDN/object-storage base URL for course figure assets when offloaded from Git."
+    },
+    "license": {
+      "type": "object",
+      "required": ["code_and_schema", "question_content"],
+      "properties": {
+        "code_and_schema": { "type": "string" },
+        "question_content": { "type": "string" }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": ["courses", "questions", "quarantined", "by_origin"],
+      "properties": {
+        "courses": { "type": "integer", "minimum": 1 },
+        "questions": { "type": "integer", "minimum": 1 },
+        "quarantined": { "type": "integer", "minimum": 0 },
+        "by_origin": {
+          "type": "object",
+          "required": ["official", "community", "ai"],
+          "properties": {
+            "official": { "type": "integer", "minimum": 0 },
+            "community": { "type": "integer", "minimum": 0 },
+            "ai": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "courses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "name_en",
+          "department",
+          "category",
+          "total",
+          "quarantined",
+          "by_origin",
+          "exam_years",
+          "paths",
+          "sha256"
+        ],
+        "properties": {
+          "code": { "type": "string" },
+          "name": { "type": "string" },
+          "name_en": { "type": "string" },
+          "department": { "type": "string" },
+          "category": { "type": "string" },
+          "total": { "type": "integer", "minimum": 1 },
+          "quarantined": { "type": "integer", "minimum": 0 },
+          "by_origin": {
+            "type": "object",
+            "required": ["official", "community", "ai"],
+            "properties": {
+              "official": { "type": "integer", "minimum": 0 },
+              "community": { "type": "integer", "minimum": 0 },
+              "ai": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "exam_years": {
+            "type": "array",
+            "items": { "type": "integer" }
+          },
+          "paths": {
+            "type": "object",
+            "required": ["meta", "taxonomy", "questions"],
+            "properties": {
+              "meta": { "type": "string" },
+              "taxonomy": { "type": "string" },
+              "questions": { "type": "string" }
+            }
+          },
+          "sha256": {
+            "type": "object",
+            "required": ["meta", "taxonomy", "questions"],
+            "properties": {
+              "meta": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "taxonomy": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "questions": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

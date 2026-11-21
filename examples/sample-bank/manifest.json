@@ -1,0 +1,51 @@
+{
+  "name": "dsh-study 示例题库模板",
+  "schema_version": "1.0",
+  "data_version": "1.0.0",
+  "updated_at": "2026-11-21",
+  "repository": "local://sample-bank",
+  "asset_base_url": null,
+  "license": {
+    "code_and_schema": "MIT",
+    "question_content": "Original sample questions (MIT)"
+  },
+  "stats": {
+    "courses": 1,
+    "questions": 3,
+    "quarantined": 0,
+    "by_origin": {
+      "official": 3,
+      "community": 0,
+      "ai": 0
+    }
+  },
+  "courses": [
+    {
+      "code": "DEMO101",
+      "name": "高等数学入门（示例）",
+      "name_en": "Introductory Calculus (Sample)",
+      "department": "示例题库",
+      "category": "数学基础",
+      "total": 3,
+      "quarantined": 0,
+      "by_origin": {
+        "official": 3,
+        "community": 0,
+        "ai": 0
+      },
+      "exam_years": [
+        2026
+      ],
+      "paths": {
+        "meta": "courses/DEMO101/meta.json",
+        "taxonomy": "courses/DEMO101/taxonomy.json",
+        "questions": "courses/DEMO101/questions.jsonl"
+      },
+      "sha256": {
+        "meta": "4e5e3a2ac7d16cff0543e6dcbacc89799e5e0b50b243f4d698d30cadedfc278b",
+        "taxonomy": "9204b3ceb35e61547b55b6519ccd7052b5fb474a8ec6189d085f74c48c8b95dc",
+        "questions": "eada85e79fcf77f45944f1a9c1d516c25252b955d2e3947de16b5cb2df0c805c"
+      }
+    }
+  ]
+}

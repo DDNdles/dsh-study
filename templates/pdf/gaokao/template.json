@@ -1,0 +1,9 @@
+{
+  "id": "gaokao",
+  "kind": "pdf",
+  "name": "高考标准考试卷",
+  "description": "基于 exam-zh 的全国标准考试卷版式（卷头注意事项、大题赋分、连续编号、括号答案）",
+  "engine": "xelatex",
+  "entry": "./template.tex",
+  "supportsModes": ["inline-solution", "split"]
+}

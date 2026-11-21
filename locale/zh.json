@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "title": "学习与出卷",
+    "description": "多源题库下载、错题本、零模型一键直出 PDF 试卷与讲评 PPT，并支持大模型 Skill 协作定制"
+  },
+  "panel": "学习",
+  "quick": "快速出卷",
+  "bank": "题库与错题",
+  "sources": "题库管理",
+  "mistakes": "错题本"
+}

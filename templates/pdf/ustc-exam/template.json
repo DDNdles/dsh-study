@@ -1,0 +1,13 @@
+{
+  "id": "ustc-exam",
+  "kind": "pdf",
+  "name": "中科大标准考试卷",
+  "description": "复刻中国科学技术大学期末试卷版式（奇数页装订线、得分表、黑体解/证明、红色点评）",
+  "engine": "xelatex",
+  "entry": "./template.tex",
+  "supportsModes": ["inline-solution", "split"],
+  "defaultOptions": {
+    "showBindingLine": true,
+    "writeSpace": "standard"
+  }
+}

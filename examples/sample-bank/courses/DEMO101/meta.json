@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "code": "DEMO101",
+  "name": "高等数学入门（示例）",
+  "name_en": "Introductory Calculus (Sample)",
+  "department": "示例题库",
+  "category": "数学基础",
+  "description": "面向自建题库用户的最小模板课程，涵盖单选、填空、解答三类原创示例题。",
+  "stats": {
+    "total": 3,
+    "quarantined": 0,
+    "taxonomy_nodes": 5,
+    "by_origin": {
+      "official": 3,
+      "community": 0,
+      "ai": 0
+    },
+    "by_type": {
+      "single": 1,
+      "blank": 1,
+      "solve": 1
+    },
+    "by_difficulty": {
+      "1": 1,
+      "2": 2,
+      "3": 0,
+      "4": 0,
+      "5": 0
+    },
+    "exam_years": [
+      2026
+    ]
+  },
+  "batches": [
+    {
+      "id": "sample_demo",
+      "count": 3,
+      "rights": "original",
+      "description": "3 道原创示例题（单选、填空、解答各 1 题）"
+    }
+  ],
+  "known_notes": [],
+  "files": {
+    "questions": "questions.jsonl",
+    "taxonomy": "taxonomy.json"
+  },
+  "sha256": {
+    "questions": "eada85e79fcf77f45944f1a9c1d516c25252b955d2e3947de16b5cb2df0c805c",
+    "taxonomy": "9204b3ceb35e61547b55b6519ccd7052b5fb474a8ec6189d085f74c48c8b95dc"
+  }
+}
