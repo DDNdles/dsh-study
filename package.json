@@ -2,6 +2,25 @@
   "name": "dsh-study",
   "version": "0.1.2",
   "description": "Question-bank, mistake-review, paper assembly, and export workspace for DeepSeek Harness & TokenWorks",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "tokenworks",
+    "question-bank",
+    "latex",
+    "pptx",
+    "spaced-repetition",
+    "sqlite-fts5"
+  ],
+  "homepage": "https://github.com/DDNdles/dsh-study#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DDNdles/dsh-study.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DDNdles/dsh-study/issues"
+  },
   "type": "module",
   "main": "./dist/host/index.js",
   "exports": {
@@ -26,7 +45,8 @@
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "test": "node --test ./tests/*.test.js",
-    "verify": "npm run build && npm test"
+    "verify": "npm run build && npm test",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=24.0.0",
