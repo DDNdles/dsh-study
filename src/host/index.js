@@ -13,7 +13,7 @@ import { questionDetails, registerTools, searchQuestions } from './tools.js'
 
 export const name = 'dsh-study'
 export const inject = [
-  'tools', 'connection', 'typertGateway', 'subprocess', 'settings',
+  'tools', 'connection', 'typertGateway', 'subprocess',
 ]
 
 export const Config = Schema.object({
@@ -66,17 +66,10 @@ export async function apply(ctx, input = {}) {
     subprocess: ctx.subprocess, bundleRoot: base,
   })
   await sources.initialize()
-  const services = { db, sources, mistakes, papers, render, config, settings: null }
+  const services = { db, sources, mistakes, papers, render, config }
 
   ctx.effect(() => () => db.close())
   registerTools(ctx, services)
-
-  ctx.inject(['settings'], scope => {
-    services.settings = scope.settings
-    if (typeof scope.settings?.configure === 'function') {
-      scope.effect(() => scope.settings.configure({ auto: true }, ctx.fiber), 'dsh-study: settings')
-    }
-  })
 
   // 通道二：静默注入学习与出卷协作指令到系统提示（不在 / 菜单的「技能」区新增冗余条目）
   const skillPath = path.join(base, 'skills', 'dsh-study', 'SKILL.md')
@@ -224,10 +217,6 @@ export async function apply(ctx, input = {}) {
           return { ok: true, data: papers.confirmVariant(payload.draft_id) }
         case 'templateList':
           return { ok: true, data: await render.templates() }
-        case 'getSettings':
-          return { ok: true, data: readSettings(services) }
-        case 'updateSettings':
-          return { ok: true, data: await updateSettings(services, payload) }
         case 'exportRender':
           return { ok: true, data: await render.render(payload, signal) }
         case 'quickExport': {
@@ -330,44 +319,8 @@ function isMutation(endpoint) {
     'mistakeDraft', 'mistakeDraftDismiss', 'mistakeCommit', 'mistakeReview',
     'paperAssembleMistakes', 'paperAssemble', 'paperAssembleCustom', 'paperDelete',
     'paperCommentUpdate', 'variantPropose', 'variantCommit',
-    'exportRender', 'quickExport', 'paperItemsUpdate', 'updateSettings',
+    'exportRender', 'quickExport', 'paperItemsUpdate',
   ]).has(endpoint)
-}
-
-function settingsDescriptor(services) {
-  const settings = services.settings
-  if (typeof settings?.describe !== 'function') return null
-  const rows = settings.describe({ redactSecrets: true })
-  return rows.find(row => String(row.ns) === 'dsh-study')
-    ?? rows.find(row => row.value && Object.prototype.hasOwnProperty.call(row.value, 'dataDir'))
-    ?? null
-}
-
-function readSettings(services) {
-  const descriptor = settingsDescriptor(services)
-  if (!descriptor) return { ns: 'dsh-study', value: {}, revision: null }
-  return {
-    ns: String(descriptor.ns),
-    value: descriptor.value ?? {},
-    revision: descriptor.revision ?? 0,
-  }
-}
-
-async function updateSettings(services, payload = {}) {
-  const descriptor = settingsDescriptor(services)
-  if (!descriptor || typeof services.settings?.update !== 'function') {
-    throw new Error('当前环境不支持修改插件设置')
-  }
-  const fields = [
-    'dataDir', 'defaultSourceId', 'mirrorBaseUrl', 'xelatexBin', 'defaultPdfTemplate',
-    'defaultPdfMode', 'defaultPptTemplate', 'allowAiVariants', 'excludeQuarantined',
-  ]
-  const patch = {}
-  for (const field of fields) {
-    if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field]
-  }
-  await services.settings.update(String(descriptor.ns), patch, payload.revision ?? descriptor.revision)
-  return readSettings(services)
 }
 
 function assertRpcConfirmation(confirmed) {

@@ -1861,92 +1861,6 @@ export function apply(ctx) {
     return h('span', null, '错题本')
   }
 
-  // ============================================================================
-  // 全中文精简设置页
-  // ============================================================================
-
-  function StudySettings({ ctx: context }) {
-    const [form, setForm] = useState({
-      dataDir: '', mirrorBaseUrl: '', defaultPdfTemplate: 'ustc-exam', xelatexBin: 'xelatex', allowAiVariants: false,
-    })
-    const [revision, setRevision] = useState(null)
-    const [status, setStatus] = useState({ loading: true, error: '', saved: false })
-
-    useEffect(() => {
-      let live = true
-      rpc(context, 'getSettings').then(result => {
-        if (!live) return
-        const value = result?.value ?? {}
-        setForm({
-          dataDir: value.dataDir ?? '',
-          mirrorBaseUrl: value.mirrorBaseUrl ?? '',
-          defaultPdfTemplate: value.defaultPdfTemplate ?? 'ustc-exam',
-          xelatexBin: value.xelatexBin ?? 'xelatex',
-          allowAiVariants: value.allowAiVariants === true,
-        })
-        setRevision(result?.revision ?? 0)
-        setStatus({ loading: false, error: '', saved: false })
-      }).catch(error => {
-        if (live) setStatus({ loading: false, error: friendlyError(error), saved: false })
-      })
-      return () => { live = false }
-    }, [context])
-
-    const update = (field, value) => setForm(current => ({ ...current, [field]: value }))
-    const save = async () => {
-      setStatus({ loading: false, error: '', saved: false })
-      try {
-        const result = await rpc(context, 'updateSettings', { ...form, revision })
-        setRevision(result?.revision ?? revision)
-        setStatus({ loading: false, error: '', saved: true })
-      } catch (error) {
-        setStatus({ loading: false, error: friendlyError(error), saved: false })
-      }
-    }
-
-    return h('section', { className: 'dsh-study dsh-study-settings' },
-      h('h2', { style: { margin: 0, fontSize: 16 } }, '学习插件设置'),
-      status.error ? h('div', { className: 'dsh-study-banner err', role: 'alert' }, status.error) : null,
-      h('div', { className: 'dsh-study-group' },
-        h('span', { className: 'dsh-study-group-label' }, '数据存储目录（留空使用默认目录）'),
-        h('input', {
-          className: 'dsh-study-input', value: form.dataDir, placeholder: '留空自动存放在应用数据目录',
-          onChange: e => update('dataDir', e.target.value),
-        })),
-      h('div', { className: 'dsh-study-group' },
-        h('span', { className: 'dsh-study-group-label' }, '题库下载加速镜像（选填）'),
-        h('input', {
-          className: 'dsh-study-input', value: form.mirrorBaseUrl, placeholder: '留空直连 GitHub，可填镜像前缀',
-          onChange: e => update('mirrorBaseUrl', e.target.value),
-        })),
-      h('div', { className: 'dsh-study-grid2' },
-        h('div', { className: 'dsh-study-group' },
-          h('span', { className: 'dsh-study-group-label' }, '默认试卷模板'),
-          h(NiceSelect, {
-            value: form.defaultPdfTemplate,
-            options: [
-              { value: 'ustc-exam', label: '中科大标准考试卷' },
-              { value: 'gaokao', label: '高考标准考试卷' },
-            ],
-            onChange: v => update('defaultPdfTemplate', v),
-          })),
-        h('div', { className: 'dsh-study-group' },
-          h('span', { className: 'dsh-study-group-label' }, 'LaTeX 排版程序'),
-          h('input', {
-            className: 'dsh-study-input', value: form.xelatexBin, placeholder: '默认 xelatex',
-            onChange: e => update('xelatexBin', e.target.value),
-          }))),
-      h('label', { className: 'dsh-study-row', style: { cursor: 'pointer' } },
-        h('input', {
-          type: 'checkbox', checked: form.allowAiVariants,
-          onChange: e => update('allowAiVariants', e.target.checked),
-        }),
-        h('span', null, '允许大模型在题库不足时按需补充 AI 变式题（需人工确认）')),
-      h('div', { className: 'dsh-study-row' },
-        h('button', { type: 'button', className: 'dsh-study-btn primary', disabled: status.loading, onClick: save }, '保存设置'),
-        status.saved ? h('span', { style: { color: 'var(--s-ok)', fontSize: 13 } }, '已保存') : null))
-  }
-
   // ---- 注入样式表与 KaTeX 样式（修复公式双重乱码） ----
   ctx.effect(() => {
     const style = document.createElement('style')
@@ -2054,16 +1968,6 @@ export function apply(ctx) {
     name: 'sidebar.right.pane.tab.title', key: PANEL_ID, locale: NS,
     inject: () => ({}),
   }, RightTitle)))
-
-  ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: PANEL_ID, order: 30, locale: NS,
-    label: () => '学习',
-    inject: () => ({ ctx }),
-  }, StudySettings)))
-
-  ctx.effect(() => ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
-    name: 'settings.section.icon', id: PANEL_ID, locale: NS,
-  }, ({ size }) => h(Icon.BookOpen, { size: size ?? 16, strokeWidth: 1.85 }))))
 }
 
 function normalizeExportRow(row) {
