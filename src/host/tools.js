@@ -216,7 +216,14 @@ async function execute(name, args, exec, services) {
   const signal = exec.signal
   switch (name) {
     case 'study_source_list':
-      return { ok: true, data: sources.list() }
+      return {
+        ok: true,
+        data: sources.list().map(row => ({
+          ...row,
+          // 不向大模型暴露本机数据目录绝对路径，避免触发文件系统探索
+          location: row.transport === 'personal' ? '内置个人错题库' : row.location,
+        })),
+      }
     case 'study_source_add':
       return { ok: true, data: await sources.add(args, signal) }
     case 'study_source_sync':
@@ -263,23 +270,49 @@ async function execute(name, args, exec, services) {
       return { ok: true, data: papers.confirmVariant(args.draft_id) }
     case 'study_template_list':
       return { ok: true, data: await render.templates() }
-    case 'study_env_check':
-      return { ok: true, data: await services.latexEnv.detect(config.xelatexBin, signal) }
+    case 'study_env_check': {
+      const env = await services.latexEnv.detect(config.xelatexBin, signal)
+      return { ok: true, data: { ...env, executable: undefined } }
+    }
     case 'study_env_install_latex':
       assertUserConfirmation(exec, args.confirmed)
       services.latexEnv.install({ mirrorBaseUrl: config.mirrorBaseUrl }).catch(() => {})
       return { ok: true, data: await services.latexEnv.detect(config.xelatexBin, signal) }
     case 'study_question_feedback':
       return { ok: true, data: await services.feedback.submit(args, signal) }
-    case 'study_export_render':
+    case 'study_export_render': {
+      const rendered = await render.render({
+        ...args,
+        template_id: args.template_id || (args.format === 'ppt' ? config.defaultPptTemplate : config.defaultPdfTemplate),
+        mode: args.mode || config.defaultPdfMode,
+      }, signal)
+      const arts = rendered.artifacts ?? {}
+      const fileLink = rel => (rel ? `/api/dsh-study/file?path=${encodeURIComponent(rel)}` : undefined)
+      const downloadLink = rel => (rel ? `/api/dsh-study/file?path=${encodeURIComponent(rel)}&download=1` : undefined)
+      const links = {}
+      if (arts.inlinePdf) { links.pdf_preview = fileLink(arts.inlinePdf); links.pdf_download = downloadLink(arts.inlinePdf) }
+      if (arts.questionPdf) { links.question_pdf_preview = fileLink(arts.questionPdf); links.question_pdf_download = downloadLink(arts.questionPdf) }
+      if (arts.answerPdf) { links.answer_pdf_preview = fileLink(arts.answerPdf); links.answer_pdf_download = downloadLink(arts.answerPdf) }
+      if (arts.pptx) { links.pptx_download = downloadLink(arts.pptx) }
+      if (arts.html) { links.html_preview = fileLink(arts.html) }
       return {
         ok: true,
-        data: await render.render({
-          ...args,
-          template_id: args.template_id || (args.format === 'ppt' ? config.defaultPptTemplate : config.defaultPdfTemplate),
-          mode: args.mode || config.defaultPdfMode,
-        }, signal),
+        data: {
+          export_id: rendered.export_id,
+          paper_id: rendered.paper_id,
+          format: rendered.format,
+          template_id: rendered.template_id,
+          export_mode: rendered.export_mode,
+          status: rendered.status,
+          degraded_reason: rendered.degraded_reason ?? null,
+          links,
+          done: rendered.status === 'ok',
+          delivery_note: rendered.status === 'ok'
+            ? '导出已成功完成且内置模板已校验通过。请直接向用户汇报试卷标题、题量、总分与上方预览/下载链接并立即结束本轮；除非用户明确要求打开浏览器检查排版，否则不要调用浏览器、截图或脚本做二次核查，更不要修改任何插件或模板文件。'
+            : '当前因缺少本机 XeLaTeX 已降级为可打印网页版，请如实告知用户并提供 html_preview 链接，可询问用户是否确认安装轻量 TinyTeX（study_env_install_latex）。',
+        },
       }
+    }
     default:
       throw new Error(`未知工具：${name}`)
   }

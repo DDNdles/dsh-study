@@ -56,7 +56,7 @@
 
 ### 安装插件
 
-可直接从 [Releases](https://github.com/DDNdles/dsh-study/releases) 下载最新 `dsh-study-0.1.6.tgz`，或从源码自行构建：
+可直接从 [Releases](https://github.com/DDNdles/dsh-study/releases) 下载最新 `dsh-study-0.1.7.tgz`，或从源码自行构建：
 
 ```bash
 git clone https://github.com/DDNdles/dsh-study.git
@@ -69,12 +69,12 @@ npm pack
 **方式一：DeepSeek Harness 安装**
 
 ```bash
-dsh plugin add ./dsh-study-0.1.6.tgz
+dsh plugin add ./dsh-study-0.1.7.tgz
 ```
 
 **方式二：词元工坊安装**
 
-在词元工坊左侧或设置中打开「插件管理」，选择本地安装 `.tgz` 包（`dsh-study-0.1.6.tgz`）；或在桌面端完全退出后通过命令行写入 `desktop` profile。
+在词元工坊左侧或设置中打开「插件管理」，选择本地安装 `.tgz` 包（`dsh-study-0.1.7.tgz`）；或在桌面端完全退出后通过命令行写入 `desktop` profile。
 
 安装完成后，请从系统托盘**完全退出并重启客户端**：
 1. 在左侧边栏打开 **「学习」 → 「题库管理」**，按需勾选课程同步到本地即可离线使用。

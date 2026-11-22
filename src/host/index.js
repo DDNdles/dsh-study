@@ -86,7 +86,7 @@ export async function apply(ctx, input = {}) {
     if (typeof scope.systemPrompt?.section === 'function') {
       scope.effect(() => scope.systemPrompt.section({
         name: 'dsh-study',
-        order: 2650,
+        order: 9200,
         interpolate: false,
         text: () => body,
       }))
