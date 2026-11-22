@@ -196,6 +196,19 @@ CREATE TABLE IF NOT EXISTS exports (
   log_excerpt TEXT,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS question_feedback (
+  feedback_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  question_id TEXT NOT NULL,
+  course_code TEXT NOT NULL,
+  categories_json TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  delivery_status TEXT NOT NULL DEFAULT 'local',
+  issue_urls_json TEXT NOT NULL DEFAULT '[]',
+  markdown TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `
 
 export function createDatabase(dataDir) {

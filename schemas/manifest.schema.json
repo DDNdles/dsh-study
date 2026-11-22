@@ -25,6 +25,14 @@
       "type": ["string", "null"],
       "description": "Optional external CDN/object-storage base URL for course figure assets when offloaded from Git."
     },
+    "feedback_url": {
+      "type": ["string", "null"],
+      "description": "Optional web page URL for submitting question feedback."
+    },
+    "feedback_endpoint": {
+      "type": ["string", "null"],
+      "description": "Optional HTTPS POST webhook endpoint for one-click direct question feedback submission."
+    },
     "license": {
       "type": "object",
       "required": ["code_and_schema", "question_content"],

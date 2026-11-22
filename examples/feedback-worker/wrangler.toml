@@ -1,0 +1,14 @@
+name = "dsh-study-feedback-relay"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+# 方式 A：推送到 USTC GitLab（推荐，搭配 wrangler secret put GITLAB_TOKEN）
+GITLAB_BASE_URL = "https://git.ustc.edu.cn"
+GITLAB_PROJECT_ID = "10052"
+
+# 方式 B：推送到 GitHub（也可与 GitLab 同时配置作为自动兜底，搭配 wrangler secret put GITHUB_TOKEN）
+GITHUB_REPO = "DDNdles/USTC-Question-Bank"
+
+# 可选：限制允许提交的题库源 ID（逗号分隔）
+ALLOWED_SOURCES = "ustc-gitlab,ustc-official"

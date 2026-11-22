@@ -175,6 +175,12 @@ export function registerTools(ctx, services) {
     ['study_env_install_latex', '自动下载并安装独立轻量 LaTeX 环境（TinyTeX + 中文试卷宏包）到插件数据目录；仅在用户明确确认安装后调用。', object({
       confirmed: bool('仅在用户明确确认安装后传 true'),
     }, ['confirmed'])],
+    ['study_question_feedback', '记录题目问题反馈（题干错误、解析错误、来源错误、图片不清晰/被截断、公式排版或知识点归类错误等），并生成直达题库仓库的一键预填 Issue 链接（若题库配置了直推接口则直接发送）。', object({
+      source_id: string('题库源标识'),
+      question_id: string('题目 ID'),
+      categories: array(string('问题类型，如：题干错误、答案或解析错误、来源/年份错误、图片不清晰、图片被截断、公式排版异常、知识点归类错误、其他问题'), { minItems: 1 }),
+      detail: string('补充说明（选填）'),
+    }, ['source_id', 'question_id', 'categories'])],
     ['study_export_render', '将已保存试卷导出为 PDF（题目后解析或原题与答案分开）或讲评 PPTX。', object({
       paper_id: string('试卷 ID'),
       format: { type: 'string', enum: ['pdf', 'ppt'] },
@@ -263,6 +269,8 @@ async function execute(name, args, exec, services) {
       assertUserConfirmation(exec, args.confirmed)
       services.latexEnv.install({ mirrorBaseUrl: config.mirrorBaseUrl }).catch(() => {})
       return { ok: true, data: await services.latexEnv.detect(config.xelatexBin, signal) }
+    case 'study_question_feedback':
+      return { ok: true, data: await services.feedback.submit(args, signal) }
     case 'study_export_render':
       return {
         ok: true,

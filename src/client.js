@@ -20,6 +20,10 @@ const REVIEW_ACTIONS = [
   ['easy', '很简单'],
 ]
 const ERROR_TAG_PRESETS = ['概念', '计算', '方法', '证明', '审题', '粗心']
+const FEEDBACK_CATEGORY_PRESETS = [
+  '题干错误', '答案或解析错误', '来源/年份错误',
+  '图片不清晰', '图片被截断', '公式排版异常', '知识点归类错误', '其他问题',
+]
 const COUNT_PRESETS = [5, 8, 10, 15]
 
 const STYLE = `
@@ -907,12 +911,12 @@ export function apply(ctx) {
   function useStudyData() {
     const [state, setState] = useState({
       sources: [], courses: [], mistakes: [], drafts: [], papers: [], exports: [],
-      templates: [], taxonomy: [], error: '', notice: '', busy: false, loaded: false,
+      templates: [], taxonomy: [], feedbacks: [], error: '', notice: '', busy: false, loaded: false,
     })
 
     const refresh = useCallback(async () => {
       try {
-        const [sources, mistakes, drafts, papers, templates, exports, taxonomy] = await Promise.all([
+        const [sources, mistakes, drafts, papers, templates, exports, taxonomy, feedbacks] = await Promise.all([
           rpc(ctx, 'sourceList'),
           rpc(ctx, 'mistakeList'),
           rpc(ctx, 'mistakeDraftList'),
@@ -920,11 +924,12 @@ export function apply(ctx) {
           rpc(ctx, 'templateList'),
           rpc(ctx, 'exportList'),
           rpc(ctx, 'taxonomyList'),
+          rpc(ctx, 'feedbackList'),
         ])
         const courseRows = sources.filter(row => row.course_code)
         setState(current => ({
           ...current,
-          sources, courses: courseRows, mistakes, drafts, papers, templates, exports, taxonomy,
+          sources, courses: courseRows, mistakes, drafts, papers, templates, exports, taxonomy, feedbacks,
           error: '', loaded: true,
         }))
       } catch (error) {
@@ -993,6 +998,11 @@ export function apply(ctx) {
     const [mistakeForm, setMistakeForm] = useState({
       course_code: '', stem: '', answer: '', solution: '', error_tags: [], reflection_md: '',
     })
+    const [feedbackTarget, setFeedbackTarget] = useState(null)
+    const [feedbackCategories, setFeedbackCategories] = useState([])
+    const [feedbackDetail, setFeedbackDetail] = useState('')
+    const [feedbackResult, setFeedbackResult] = useState(null)
+    const [feedbackCopied, setFeedbackCopied] = useState(false)
 
     // ---- 题库管理 ----
     const [checkedCourses, setCheckedCourses] = useState([])
@@ -1021,6 +1031,7 @@ export function apply(ctx) {
     }, [state.courses])
 
     const mistakeKeySet = useMemo(() => new Set(state.mistakes.map(m => `${m.source_id}\0${m.question_id}`)), [state.mistakes])
+    const feedbackKeySet = useMemo(() => new Set(state.feedbacks.map(f => `${f.source_id}\0${f.question_id}`)), [state.feedbacks])
     const dueCount = useMemo(() => state.mistakes.filter(m => Date.parse(m.next_review_at) <= Date.now()).length, [state.mistakes])
     const unmasteredCount = useMemo(() => state.mistakes.filter(m => m.status === 'unmastered').length, [state.mistakes])
 
@@ -1509,6 +1520,33 @@ export function apply(ctx) {
         : [...cur, { source_id: item.source_id, question_id: item.id, course_code: item.course_code }])
     }
 
+    const openFeedbackModal = ({ source_id, question_id, course_code, source_ref, stem_md }) => {
+      setFeedbackTarget({ source_id, question_id, course_code, source_ref: source_ref || '', stem_md: stem_md || '' })
+      setFeedbackCategories([])
+      setFeedbackDetail('')
+      setFeedbackResult(null)
+      setFeedbackCopied(false)
+    }
+
+    const copyFeedbackText = async text => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text)
+        } else {
+          const el = document.createElement('textarea')
+          el.value = text
+          el.style.position = 'fixed'
+          el.style.opacity = '0'
+          document.body.appendChild(el)
+          el.select()
+          document.execCommand('copy')
+          document.body.removeChild(el)
+        }
+        setFeedbackCopied(true)
+        setTimeout(() => setFeedbackCopied(false), 2000)
+      } catch {}
+    }
+
     const draftsBanner = state.drafts.length
       ? h('div', { className: 'dsh-study-box', style: { marginBottom: 16, borderColor: 'var(--s-brand)' } },
         h('div', { className: 'dsh-study-between', style: { marginBottom: 10 } },
@@ -1604,6 +1642,7 @@ export function apply(ctx) {
                 ? bankItems.map(item => {
                   const key = `${item.source_id}\0${item.id}`
                   const isMistake = mistakeKeySet.has(key)
+                  const isReported = feedbackKeySet.has(key)
                   const inBasket = basket.some(x => `${x.source_id}\0${x.question_id}` === key)
                   return h('article', { className: 'dsh-study-q', key },
                     h('div', { className: 'dsh-study-between', style: { marginBottom: 8 } },
@@ -1619,7 +1658,17 @@ export function apply(ctx) {
                         h('button', {
                           type: 'button', className: 'dsh-study-btn sm', disabled: state.busy,
                           onClick: () => call('mistakeMark', { source_id: item.source_id, question_id: item.id }, '已记入错题本'),
-                        }, isMistake ? '再记一次错题' : '记入错题'))),
+                        }, isMistake ? '再记一次错题' : '记入错题'),
+                        h('button', {
+                          type: 'button', className: 'dsh-study-btn sm ghost', title: '反馈本题题干、解析或图片问题',
+                          onClick: () => openFeedbackModal({
+                            source_id: item.source_id,
+                            question_id: item.id,
+                            course_code: item.course_code,
+                            source_ref: item.source_ref,
+                            stem_md: item.question?.stem?.md,
+                          }),
+                        }, h(Icon.Flag, { size: 13 }), isReported ? '已反馈' : '反馈'))),
                     h(RichMath, { text: item.question?.stem?.md ?? '' }),
                     item.question?.options?.length ? h('div', { className: 'dsh-study-grid2', style: { marginTop: 8 } },
                       item.question.options.map(o => h('div', { key: o.key, className: 'dsh-study-row', style: { alignItems: 'baseline' } },
@@ -1689,6 +1738,16 @@ export function apply(ctx) {
                       key: rating, type: 'button', className: 'dsh-study-btn sm', disabled: state.busy,
                       onClick: () => call('mistakeReview', { mistake_id: m.mistake_id, rating }, `已记录：${label}`),
                     }, label)),
+                    h('button', {
+                      type: 'button', className: 'dsh-study-icon-btn', title: '反馈题目问题',
+                      onClick: () => openFeedbackModal({
+                        source_id: m.source_id,
+                        question_id: m.question_id,
+                        course_code: m.course_code,
+                        source_ref: m.question?.source?.ref,
+                        stem_md: m.question?.stem?.md,
+                      }),
+                    }, h(Icon.Flag, { size: 14 })),
                     h('button', {
                       type: 'button', className: 'dsh-study-icon-btn', title: '移出错题本',
                       onClick: () => call('mistakeDelete', { mistake_id: m.mistake_id }, '已移出错题本'),
@@ -1934,6 +1993,95 @@ export function apply(ctx) {
       h('button', { type: 'button', className: 'dsh-study-btn ghost', onClick: () => setShowAddMistakeModal(false) }, '取消'),
       h('button', { type: 'submit', className: 'dsh-study-btn primary', disabled: state.busy }, '保存到错题本')))) : null
 
+    // ---- 题目问题反馈弹窗 ----
+    const feedbackModal = feedbackTarget ? h('div', {
+      className: 'dsh-study-modal-bg',
+      onClick: e => { if (e.target === e.currentTarget) setFeedbackTarget(null) },
+    }, feedbackResult
+      ? h('div', { className: 'dsh-study-modal' },
+        h('div', { className: 'dsh-study-between' },
+          h('strong', { style: { fontSize: 15 } }, '题目反馈已生成'),
+          h('button', { type: 'button', className: 'dsh-study-icon-btn', onClick: () => setFeedbackTarget(null) }, h(Icon.X, { size: 16 }))),
+        feedbackResult.delivery_status === 'delivered'
+          ? h('div', { className: 'dsh-study-banner ok', style: { marginBottom: 0 } },
+            h('span', null, '反馈已免登录直接送达题库维护者，感谢纠错！'),
+            feedbackResult.delivered_issue_url ? h('a', {
+              href: feedbackResult.delivered_issue_url, target: '_blank', rel: 'noreferrer',
+              style: { color: 'inherit', fontWeight: 600, whiteSpace: 'nowrap' },
+            }, '查看记录') : null)
+          : h('div', { className: 'dsh-study-muted' }, '已记录到本地并自动填好题目编号、来源与问题描述，任选下方渠道一键提交：'),
+        feedbackResult.delivery_error
+          ? h('div', { className: 'dsh-study-banner info', style: { marginBottom: 0 } }, feedbackResult.delivery_error)
+          : null,
+        feedbackResult.delivery_status !== 'delivered'
+          ? h('div', { className: 'dsh-study-stack' },
+            ...(feedbackResult.issue_channels ?? []).map(ch => h('a', {
+              key: ch.id,
+              href: ch.url,
+              target: '_blank',
+              rel: 'noreferrer',
+              className: `dsh-study-btn${ch.primary ? ' primary' : ''}`,
+              style: { textDecoration: 'none' },
+            }, h(Icon.ExternalLink, { size: 14 }), ch.label)),
+            h('button', {
+              type: 'button',
+              className: `dsh-study-btn${!(feedbackResult.issue_channels?.length) ? ' primary' : ''}`,
+              onClick: () => copyFeedbackText(feedbackResult.markdown),
+            }, h(feedbackCopied ? Icon.Check : Icon.Copy, { size: 14 }), feedbackCopied ? '已复制反馈内容' : '复制结构化反馈（发群 / 邮件）'))
+          : null,
+        h('details', { className: 'dsh-study-details' },
+          h('summary', null, '查看反馈内容预览'),
+          h('pre', {
+            className: 'dsh-study-soft',
+            style: { marginTop: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, maxHeight: 200, overflow: 'auto' },
+          }, feedbackResult.markdown)),
+        h('div', { className: 'dsh-study-row', style: { justifyContent: 'flex-end' } },
+          h('button', { type: 'button', className: 'dsh-study-btn', onClick: () => setFeedbackTarget(null) }, '完成')))
+      : h('form', {
+        className: 'dsh-study-modal',
+        onSubmit: async e => {
+          e.preventDefault()
+          const res = await call('feedbackSubmit', {
+            source_id: feedbackTarget.source_id,
+            question_id: feedbackTarget.question_id,
+            categories: feedbackCategories,
+            detail: feedbackDetail,
+          })
+          setFeedbackResult(res)
+        },
+      },
+      h('div', { className: 'dsh-study-between' },
+        h('strong', { style: { fontSize: 15 } }, '反馈题目问题'),
+        h('button', { type: 'button', className: 'dsh-study-icon-btn', onClick: () => setFeedbackTarget(null) }, h(Icon.X, { size: 16 }))),
+      h('div', { className: 'dsh-study-soft', style: { fontSize: 12.5 } },
+        h('div', { className: 'dsh-study-row', style: { marginBottom: 4 } },
+          h('span', { className: 'dsh-study-tag accent' }, courseNameMap.get(feedbackTarget.course_code) ?? feedbackTarget.course_code),
+          h('span', { className: 'dsh-study-muted' }, feedbackTarget.source_ref || feedbackTarget.question_id)),
+        h('div', { style: { color: 'var(--s-muted)', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' } },
+          stripLatexInline(feedbackTarget.stem_md))),
+      h('div', { className: 'dsh-study-group' },
+        h('span', { className: 'dsh-study-group-label' }, '问题类型（可多选）'),
+        h('div', { className: 'dsh-study-pills' },
+          FEEDBACK_CATEGORY_PRESETS.map(cat => h('button', {
+            key: cat, type: 'button', className: 'dsh-study-pill',
+            'aria-pressed': feedbackCategories.includes(cat),
+            onClick: () => setFeedbackCategories(cur => cur.includes(cat) ? cur.filter(x => x !== cat) : [...cur, cat]),
+          }, cat)))),
+      h('div', { className: 'dsh-study-group' },
+        h('span', { className: 'dsh-study-group-label' }, '补充说明（选填）'),
+        h('textarea', {
+          className: 'dsh-study-textarea',
+          placeholder: '例如：第 (2) 问少了一个负号，或原图右侧公式被截断…',
+          value: feedbackDetail,
+          onChange: e => setFeedbackDetail(e.target.value),
+        })),
+      h('div', { className: 'dsh-study-row', style: { justifyContent: 'flex-end' } },
+        h('button', { type: 'button', className: 'dsh-study-btn ghost', onClick: () => setFeedbackTarget(null) }, '取消'),
+        h('button', {
+          type: 'submit', className: 'dsh-study-btn primary',
+          disabled: state.busy || (!feedbackCategories.length && !feedbackDetail.trim()),
+        }, '提交反馈')))) : null
+
     return h('main', { className: 'dsh-study' },
       h('header', { className: 'dsh-study-head' },
         h('div', { className: 'dsh-study-head-left' },
@@ -1949,7 +2097,8 @@ export function apply(ctx) {
           h('span', null, state.error),
           h('button', { type: 'button', className: 'dsh-study-icon-btn', onClick: clearMessages }, h(Icon.X, { size: 14 }))) : null,
         tab === 'quick' ? quickView : tab === 'bank' ? bankAndMistakeView : sourcesView),
-      addMistakeModal)
+      addMistakeModal,
+      feedbackModal)
   }
 
   // ============================================================================

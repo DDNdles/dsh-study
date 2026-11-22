@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import Schema from '@deepseek-ai/schemastery'
 import { createDatabase } from './db.js'
+import { FeedbackService } from './feedback.js'
 import { LatexEnvService } from './latex-env.js'
 import { MistakeService } from './mistakes.js'
 import { PaperService } from './papers.js'
@@ -58,6 +59,7 @@ export async function apply(ctx, input = {}) {
     db, dataDir: config.dataDir, mirrorBaseUrl: config.mirrorBaseUrl, subprocess: ctx.subprocess,
   })
   const mistakes = new MistakeService({ db, dataDir: config.dataDir })
+  const feedback = new FeedbackService({ db })
   const papers = new PaperService({
     db, allowAiVariants: config.allowAiVariants, excludeQuarantined: config.excludeQuarantined,
   })
@@ -71,7 +73,7 @@ export async function apply(ctx, input = {}) {
     subprocess: ctx.subprocess, bundleRoot: base, latexEnv,
   })
   await sources.initialize()
-  const services = { db, sources, mistakes, papers, render, latexEnv, config }
+  const services = { db, sources, mistakes, feedback, papers, render, latexEnv, config }
 
   ctx.effect(() => () => db.close())
   registerTools(ctx, services)
@@ -231,6 +233,10 @@ export async function apply(ctx, input = {}) {
           latexEnv.install({ mirrorBaseUrl: payload.mirrorBaseUrl || config.mirrorBaseUrl }).catch(() => {})
           return { ok: true, data: await latexEnv.detect(config.xelatexBin, signal) }
         }
+        case 'feedbackList':
+          return { ok: true, data: feedback.list(payload) }
+        case 'feedbackSubmit':
+          return { ok: true, data: await feedback.submit(payload, signal) }
         case 'exportRender':
           return { ok: true, data: await render.render(payload, signal) }
         case 'quickExport': {
@@ -333,7 +339,7 @@ function isMutation(endpoint) {
     'mistakeDraft', 'mistakeDraftDismiss', 'mistakeCommit', 'mistakeReview',
     'paperAssembleMistakes', 'paperAssemble', 'paperAssembleCustom', 'paperDelete',
     'paperCommentUpdate', 'variantPropose', 'variantCommit',
-    'exportRender', 'quickExport', 'paperItemsUpdate', 'envInstallLatex',
+    'exportRender', 'quickExport', 'paperItemsUpdate', 'envInstallLatex', 'feedbackSubmit',
   ]).has(endpoint)
 }
 

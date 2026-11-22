@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createDatabase, getQuestion } from '../src/host/db.js'
+import { FeedbackService } from '../src/host/feedback.js'
 import { LatexEnvService } from '../src/host/latex-env.js'
 import { MistakeService, scheduleReview } from '../src/host/mistakes.js'
 import { PaperService } from '../src/host/papers.js'
@@ -524,4 +525,39 @@ test('searchQuestions supports Chinese substrings, LaTeX fragments, and taxonomy
 
   const byKpName = searchQuestions(db, papers, { query: 'Limits', limit: 10 })
   assert.equal(byKpName.length, 2)
+})
+
+test('FeedbackService persists feedback, builds GitLab/GitHub pre-filled links, and supports optional webhook', async t => {
+  const { directory, db, sources } = await setup(t)
+  const bankDir = path.join(directory, 'fb-bank')
+  const manifest = await makeBank(bankDir, { questions: [question('MATH1006-fb1', '题干有笔误')] })
+  manifest.repository = 'DDNdles/USTC-Question-Bank'
+  manifest.feedback_endpoint = 'https://feedback.example.test/hook'
+  await fs.writeFile(path.join(bankDir, 'manifest.json'), JSON.stringify(manifest))
+
+  await sources.add({ source_id: 'fb-bank', name: '测试反馈题库', transport: 'local-dir', location: bankDir })
+  await sources.sync('fb-bank', ['MATH1006'])
+
+  let receivedPayload = null
+  const mockFetch = async (url, init) => {
+    receivedPayload = { url, body: JSON.parse(init.body) }
+    return new Response(JSON.stringify({ ok: true, issue_url: 'https://git.ustc.edu.cn/zzl_stella05/USTC-Question-Bank/-/issues/1' }), { status: 201 })
+  }
+
+  const feedback = new FeedbackService({ db, fetchImpl: mockFetch })
+  const res = await feedback.submit({
+    source_id: 'fb-bank',
+    question_id: 'MATH1006-fb1',
+    categories: ['题干错误', '图片被截断'],
+    detail: '右侧公式被裁掉了一半',
+  })
+
+  assert.equal(res.delivery_status, 'delivered')
+  assert.equal(res.delivered_issue_url, 'https://git.ustc.edu.cn/zzl_stella05/USTC-Question-Bank/-/issues/1')
+  assert.equal(receivedPayload.url, 'https://feedback.example.test/hook')
+  assert.equal(receivedPayload.body.question_id, 'MATH1006-fb1')
+  assert.deepEqual(receivedPayload.body.categories, ['stem_error', 'image_cropped'])
+  assert.ok(res.issue_channels.some(ch => ch.id === 'github' && ch.url.includes('DDNdles/USTC-Question-Bank/issues/new')))
+  assert.equal(feedback.list().length, 1)
+  assert.equal(feedback.list()[0].question_id, 'MATH1006-fb1')
 })
