@@ -28,6 +28,17 @@ const USTC_GITLAB_SOURCE = {
   ref: null,
 }
 
+const MIRROR_GROUPS = [
+  ['ustc-gitlab', 'ustc-official'],
+]
+
+function mirrorPeers(sourceId) {
+  for (const group of MIRROR_GROUPS) {
+    if (group.includes(sourceId)) return group.filter(id => id !== sourceId)
+  }
+  return []
+}
+
 function hash(content) {
   return createHash('sha256').update(content).digest('hex')
 }
@@ -78,6 +89,25 @@ export class SourceService {
       path.join(this.dataDir, 'personal'), null, now)
     this.db.prepare(`UPDATE sources SET name='中科大公开题库（GitHub）' WHERE source_id='ustc-official' AND name IN ('USTC-Question-Bank','中科大公开题库')`).run()
     this.db.prepare(`UPDATE sources SET name='个人错题库' WHERE source_id='local-personal' AND name='Personal mistakes'`).run()
+    // 若内置双镜像源曾同时安装同一门课，自动保留较新的副本，清理旧副本防重复
+    const mirrorDups = this.db.prepare(`
+      SELECT a.code, a.installed_at AS gitlab_at, b.installed_at AS github_at
+      FROM courses a
+      JOIN courses b ON a.code = b.code
+      WHERE a.source_id='ustc-gitlab' AND a.installed=1
+        AND b.source_id='ustc-official' AND b.installed=1
+    `).all()
+    if (mirrorDups.length) {
+      transaction(this.db, () => {
+        for (const dup of mirrorDups) {
+          const dropSource = String(dup.gitlab_at ?? '') >= String(dup.github_at ?? '') ? 'ustc-official' : 'ustc-gitlab'
+          this.db.prepare('DELETE FROM questions_fts WHERE source_id=? AND course_code=?').run(dropSource, dup.code)
+          this.db.prepare('DELETE FROM questions WHERE source_id=? AND course_code=?').run(dropSource, dup.code)
+          this.db.prepare('DELETE FROM taxonomy WHERE source_id=? AND course_code=?').run(dropSource, dup.code)
+          this.db.prepare('UPDATE courses SET installed=0, installed_at=NULL WHERE source_id=? AND code=?').run(dropSource, dup.code)
+        }
+      })
+    }
     await fs.mkdir(path.join(this.dataDir, 'personal', 'courses'), { recursive: true })
     return this.list()
   }
@@ -93,12 +123,64 @@ export class SourceService {
   }
 
   list() {
-    return this.db.prepare(`
+    const rows = this.db.prepare(`
       SELECT s.source_id, s.name, s.transport, s.location, s.data_version, s.last_synced_at,
-        c.code AS course_code, c.name AS course_name, c.total_questions, c.installed, c.installed_at
+        c.code AS course_code, c.name AS course_name, c.total_questions, c.installed, c.installed_at,
+        c.meta_sha256, c.taxonomy_sha256, c.questions_sha256
       FROM sources s LEFT JOIN courses c USING(source_id)
       ORDER BY s.source_id, c.code
     `).all()
+
+    const byExactHash = new Map()
+    const byCode = new Map()
+    for (const row of rows) {
+      if (!row.course_code || !row.installed || row.source_id === 'local-personal') continue
+      if (row.questions_sha256) {
+        const key = `${row.course_code}\0${row.questions_sha256}\0${row.taxonomy_sha256 ?? ''}`
+        if (!byExactHash.has(key)) byExactHash.set(key, row)
+      }
+      const list = byCode.get(row.course_code) ?? []
+      list.push(row)
+      byCode.set(row.course_code, list)
+    }
+
+    return rows.map(row => {
+      let installed_elsewhere = false
+      let installed_via_source_id = null
+      let installed_via_source_name = null
+      let update_available = false
+
+      if (row.course_code && !row.installed && row.source_id !== 'local-personal') {
+        const exactKey = row.questions_sha256
+          ? `${row.course_code}\0${row.questions_sha256}\0${row.taxonomy_sha256 ?? ''}`
+          : null
+        const exact = exactKey ? byExactHash.get(exactKey) : null
+        if (exact && exact.source_id !== row.source_id) {
+          installed_elsewhere = true
+          installed_via_source_id = exact.source_id
+          installed_via_source_name = exact.name
+        } else {
+          const peers = new Set(mirrorPeers(row.source_id))
+          const peerMatch = (byCode.get(row.course_code) ?? []).find(other => peers.has(other.source_id))
+          if (peerMatch) {
+            installed_elsewhere = true
+            installed_via_source_id = peerMatch.source_id
+            installed_via_source_name = peerMatch.name
+            update_available = Boolean(
+              row.questions_sha256 && peerMatch.questions_sha256 && row.questions_sha256 !== peerMatch.questions_sha256,
+            )
+          }
+        }
+      }
+
+      return {
+        ...row,
+        installed_elsewhere,
+        installed_via_source_id,
+        installed_via_source_name,
+        update_available,
+      }
+    })
   }
 
   async add(input, signal) {
@@ -279,6 +361,13 @@ export class SourceService {
 
   replaceCourse(sourceId, update) {
     const { course, meta, taxonomy, questions } = update
+    // 若与内置镜像源存在同一课程旧副本，同步迁移清理以避免题库与出卷重复计题
+    for (const peerId of mirrorPeers(sourceId)) {
+      this.db.prepare('DELETE FROM questions_fts WHERE source_id=? AND course_code=?').run(peerId, course.code)
+      this.db.prepare('DELETE FROM questions WHERE source_id=? AND course_code=?').run(peerId, course.code)
+      this.db.prepare('DELETE FROM taxonomy WHERE source_id=? AND course_code=?').run(peerId, course.code)
+      this.db.prepare('UPDATE courses SET installed=0, installed_at=NULL WHERE source_id=? AND code=?').run(peerId, course.code)
+    }
     this.db.prepare('DELETE FROM questions_fts WHERE source_id=? AND course_code=?').run(sourceId, course.code)
     this.db.prepare('DELETE FROM courses WHERE source_id=? AND code=?').run(sourceId, course.code)
     this.db.prepare(`

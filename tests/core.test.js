@@ -479,3 +479,24 @@ test('LatexEnvService detects managed TinyTeX when PATH lacks xelatex and respec
   assert.equal(foundExplicit.source, 'configured')
   assert.equal(foundExplicit.executable, managedBin)
 })
+
+test('SourceService.list auto-detects identical courses installed via another source', async t => {
+  const { directory, sources } = await setup(t)
+  const bankDir = path.join(directory, 'shared-bank')
+  await makeBank(bankDir, { questions: [question('MATH1006-q1')] })
+
+  await sources.add({ source_id: 'mirror-a', name: '源 A', transport: 'local-dir', location: bankDir })
+  await sources.add({ source_id: 'mirror-b', name: '源 B', transport: 'local-dir', location: bankDir })
+  await sources.sync('mirror-a', ['MATH1006'])
+
+  const rows = sources.list()
+  const rowA = rows.find(r => r.source_id === 'mirror-a' && r.course_code === 'MATH1006')
+  const rowB = rows.find(r => r.source_id === 'mirror-b' && r.course_code === 'MATH1006')
+  assert.equal(rowA.installed, 1)
+  assert.equal(rowA.installed_elsewhere, false)
+  assert.equal(rowB.installed, 0)
+  assert.equal(rowB.installed_elsewhere, true)
+  assert.equal(rowB.installed_via_source_id, 'mirror-a')
+  assert.equal(rowB.installed_via_source_name, '源 A')
+  assert.equal(rowB.update_available, false)
+})

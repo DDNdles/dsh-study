@@ -1792,7 +1792,11 @@ export function apply(ctx) {
                     h('td', null, `${c.total_questions} 题`),
                     h('td', null, c.installed
                       ? h('span', { className: 'dsh-study-tag ok' }, '已下载')
-                      : h('span', { className: 'dsh-study-tag' }, '未下载')))
+                      : c.installed_elsewhere
+                        ? (c.update_available
+                          ? h('span', { className: 'dsh-study-tag accent', title: `本地已由「${c.installed_via_source_name}」下载，当前源有新版本` }, '可更新')
+                          : h('span', { className: 'dsh-study-tag ok', title: `已由「${c.installed_via_source_name}」下载，内容一致` }, '已下载'))
+                        : h('span', { className: 'dsh-study-tag' }, '未下载')))
                 }))))
             : null)
       }))
