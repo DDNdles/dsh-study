@@ -982,11 +982,12 @@ export function apply(ctx) {
 
     // ---- 题库与错题 ----
     const [bankSubTab, setBankSubTab] = useState('browse') // 'browse' | 'mistakes'
-    const [bankCourse, setBankCourse] = useState('')
+    const [bankCourse, setBankCourse] = useState(null) // null=未初始化, ''=全部课程
     const [bankKps, setBankKps] = useState([])
     const [bankQuery, setBankQuery] = useState('')
     const [bankItems, setBankItems] = useState([])
     const [bankSearched, setBankSearched] = useState(false)
+    const [mistakeQuery, setMistakeQuery] = useState('')
     const [basket, setBasket] = useState([]) // [{ source_id, question_id, stem, course_code }]
     const [showAddMistakeModal, setShowAddMistakeModal] = useState(false)
     const [mistakeForm, setMistakeForm] = useState({
@@ -995,6 +996,7 @@ export function apply(ctx) {
 
     // ---- 题库管理 ----
     const [checkedCourses, setCheckedCourses] = useState([])
+    const [sourceCourseQuery, setSourceCourseQuery] = useState('')
     const [showAddSource, setShowAddSource] = useState(false)
     const [sourceForm, setSourceForm] = useState({ name: '', transport: 'local-dir', location: '' })
 
@@ -1027,13 +1029,13 @@ export function apply(ctx) {
       if (installedCourses.length && !selectedCourseCodes.length) {
         setSelectedCourseCodes([installedCourses[0].code])
       }
-      if (installedCourses.length && !bankCourse) {
+      if (installedCourses.length && bankCourse === null) {
         setBankCourse(installedCourses[0].code)
       }
       if (installedCourses.length && !mistakeForm.course_code) {
         setMistakeForm(cur => ({ ...cur, course_code: installedCourses[0].code }))
       }
-    }, [installedCourses])
+    }, [installedCourses, bankCourse])
 
     // 自动检测本机或插件托管的 LaTeX（xelatex）环境；安装中则轮询进度
     useEffect(() => {
@@ -1560,12 +1562,15 @@ export function apply(ctx) {
             : h(React.Fragment, null,
               h('div', { className: 'dsh-study-row', style: { marginBottom: 14 } },
                 h(NiceSelect, {
-                  value: bankCourse,
-                  placeholder: '选择课程',
+                  value: bankCourse ?? '',
+                  placeholder: '全部课程',
                   searchPlaceholder: '搜索课程名称…',
                   wide: true,
                   style: { width: 210, flexShrink: 0 },
-                  options: installedCourses.map(c => ({ value: c.code, label: c.name, meta: `${c.total} 题` })),
+                  options: [
+                    { value: '', label: '全部课程', meta: `${installedCourses.reduce((sum, c) => sum + Number(c.total || 0), 0)} 题` },
+                    ...installedCourses.map(c => ({ value: c.code, label: c.name, meta: `${c.total} 题` })),
+                  ],
                   onChange: code => {
                     setBankCourse(code)
                     setBankKps([])
@@ -1584,8 +1589,12 @@ export function apply(ctx) {
                 }) : null,
                 h('input', {
                   className: 'dsh-study-input', style: { flex: 1, minWidth: 160 },
-                  placeholder: '搜索题干、考点或真题年份…', value: bankQuery,
-                  onChange: e => setBankQuery(e.target.value),
+                  placeholder: '搜索题干、知识点、公式或真题年份…', value: bankQuery,
+                  onChange: e => {
+                    const next = e.target.value
+                    setBankQuery(next)
+                    if (!next.trim()) loadBankQuestions({ query: '' })
+                  },
                   onKeyDown: e => { if (e.key === 'Enter') loadBankQuestions() },
                 }),
                 h('button', { type: 'button', className: 'dsh-study-btn primary', onClick: () => loadBankQuestions() },
@@ -1635,37 +1644,64 @@ export function apply(ctx) {
                     type: 'button', className: 'dsh-study-btn sm', disabled: state.busy,
                     onClick: () => runQuickExport('ppt', { mode: 'custom', custom_items: basket }),
                   }, '自选题生成 PPT'))) : null))
-        : h('div', null,
-          h('div', { className: 'dsh-study-stats' },
-            h('div', { className: 'dsh-study-stat' }, h('span', null, '今日待复习'), h('strong', null, dueCount)),
-            h('div', { className: 'dsh-study-stat' }, h('span', null, '尚未掌握'), h('strong', null, unmasteredCount)),
-            h('div', { className: 'dsh-study-stat' }, h('span', null, '全部错题'), h('strong', null, state.mistakes.length))),
-          state.mistakes.length
-            ? state.mistakes.map(m => h('article', { className: 'dsh-study-q', key: m.mistake_id },
-              h('div', { className: 'dsh-study-between', style: { marginBottom: 8 } },
-                h('div', { className: 'dsh-study-row' },
-                  h('span', { className: 'dsh-study-tag accent' }, courseNameMap.get(m.course_code) ?? m.course_code),
-                  h('span', { className: `dsh-study-tag ${m.status === 'mastered' ? 'ok' : m.status === 'unmastered' ? 'warn' : ''}` },
-                    STATUS_LABEL[m.status] ?? '未掌握'),
-                  h('span', { className: 'dsh-study-muted' }, `错 ${m.wrong_count} 次`),
-                  ...(m.error_tags ?? []).map(tag => h('span', { key: tag, className: 'dsh-study-tag' }, tag))),
-                h('div', { className: 'dsh-study-row' },
-                  ...REVIEW_ACTIONS.map(([rating, label]) => h('button', {
-                    key: rating, type: 'button', className: 'dsh-study-btn sm', disabled: state.busy,
-                    onClick: () => call('mistakeReview', { mistake_id: m.mistake_id, rating }, `已记录：${label}`),
-                  }, label)),
-                  h('button', {
-                    type: 'button', className: 'dsh-study-icon-btn', title: '移出错题本',
-                    onClick: () => call('mistakeDelete', { mistake_id: m.mistake_id }, '已移出错题本'),
-                  }, h(Icon.Trash2, { size: 14 })))),
-              h(RichMath, { text: m.question?.stem?.md ?? '' }),
-              m.reflection_md ? h('div', { className: 'dsh-study-muted', style: { marginTop: 6 } }, `反思笔记：${m.reflection_md}`) : null,
-              h('details', { className: 'dsh-study-details', style: { marginTop: 8 } },
-                h('summary', null, '查看答案与解析'),
-                h('div', { className: 'dsh-study-soft dsh-study-stack', style: { marginTop: 8 } },
-                  h('div', null, h('strong', null, '答案：'), h(RichMath, { text: m.question?.answer?.md ?? '' })),
-                  m.question?.solution?.md ? h('div', null, h('strong', null, '解析：'), h(RichMath, { text: m.question.solution.md })) : null))))
-            : h('div', { className: 'dsh-study-empty' }, '暂无错题')))
+        : (() => {
+          const mq = mistakeQuery.trim().toLowerCase()
+          const filteredMistakes = mq
+            ? state.mistakes.filter(m => {
+              const hay = [
+                courseNameMap.get(m.course_code) ?? '',
+                m.course_code ?? '',
+                m.question?.stem?.md ?? '',
+                m.question?.answer?.md ?? '',
+                m.question?.solution?.md ?? '',
+                m.reflection_md ?? '',
+                ...(m.error_tags ?? []),
+              ].join(' ').toLowerCase()
+              return mq.split(/\s+/).every(term => hay.includes(term))
+            })
+            : state.mistakes
+          return h('div', null,
+            h('div', { className: 'dsh-study-stats' },
+              h('div', { className: 'dsh-study-stat' }, h('span', null, '今日待复习'), h('strong', null, dueCount)),
+              h('div', { className: 'dsh-study-stat' }, h('span', null, '尚未掌握'), h('strong', null, unmasteredCount)),
+              h('div', { className: 'dsh-study-stat' }, h('span', null, '全部错题'), h('strong', null, state.mistakes.length))),
+            state.mistakes.length ? h('div', { className: 'dsh-study-row', style: { marginBottom: 14 } },
+              h('input', {
+                className: 'dsh-study-input', style: { flex: 1, minWidth: 180 },
+                placeholder: '搜索错题题干、解析、课程或错因标签…', value: mistakeQuery,
+                onChange: e => setMistakeQuery(e.target.value),
+              }),
+              mistakeQuery ? h('button', {
+                type: 'button', className: 'dsh-study-btn sm ghost',
+                onClick: () => setMistakeQuery(''),
+              }, '清空') : null) : null,
+            filteredMistakes.length
+              ? filteredMistakes.map(m => h('article', { className: 'dsh-study-q', key: m.mistake_id },
+                h('div', { className: 'dsh-study-between', style: { marginBottom: 8 } },
+                  h('div', { className: 'dsh-study-row' },
+                    h('span', { className: 'dsh-study-tag accent' }, courseNameMap.get(m.course_code) ?? m.course_code),
+                    h('span', { className: `dsh-study-tag ${m.status === 'mastered' ? 'ok' : m.status === 'unmastered' ? 'warn' : ''}` },
+                      STATUS_LABEL[m.status] ?? '未掌握'),
+                    h('span', { className: 'dsh-study-muted' }, `错 ${m.wrong_count} 次`),
+                    ...(m.error_tags ?? []).map(tag => h('span', { key: tag, className: 'dsh-study-tag' }, tag))),
+                  h('div', { className: 'dsh-study-row' },
+                    ...REVIEW_ACTIONS.map(([rating, label]) => h('button', {
+                      key: rating, type: 'button', className: 'dsh-study-btn sm', disabled: state.busy,
+                      onClick: () => call('mistakeReview', { mistake_id: m.mistake_id, rating }, `已记录：${label}`),
+                    }, label)),
+                    h('button', {
+                      type: 'button', className: 'dsh-study-icon-btn', title: '移出错题本',
+                      onClick: () => call('mistakeDelete', { mistake_id: m.mistake_id }, '已移出错题本'),
+                    }, h(Icon.Trash2, { size: 14 })))),
+                h(RichMath, { text: m.question?.stem?.md ?? '' }),
+                m.reflection_md ? h('div', { className: 'dsh-study-muted', style: { marginTop: 6 } }, `反思笔记：${m.reflection_md}`) : null,
+                h('details', { className: 'dsh-study-details', style: { marginTop: 8 } },
+                  h('summary', null, '查看答案与解析'),
+                  h('div', { className: 'dsh-study-soft dsh-study-stack', style: { marginTop: 8 } },
+                    h('div', null, h('strong', null, '答案：'), h(RichMath, { text: m.question?.answer?.md ?? '' })),
+                    m.question?.solution?.md ? h('div', null, h('strong', null, '解析：'), h(RichMath, { text: m.question.solution.md })) : null))))
+              : h('div', { className: 'dsh-study-empty' }, state.mistakes.length ? '未找到匹配的错题' : '暂无错题'))
+        })())
 
     // ==================== 视图 3：题库管理 ====================
     const uniqueSources = useMemo(() => {
@@ -1696,8 +1732,16 @@ export function apply(ctx) {
     const sourcesView = h('div', { style: { maxWidth: 920, margin: '0 auto' }, className: 'dsh-study-stack' },
       h('div', { className: 'dsh-study-between', style: { marginBottom: 4 } },
         h('strong', { style: { fontSize: 15 } }, '题库源'),
-        h('button', { type: 'button', className: 'dsh-study-btn', onClick: () => setShowAddSource(v => !v) },
-          h(Icon.Plus, { size: 15 }), showAddSource ? '收起' : '添加题库源')),
+        h('div', { className: 'dsh-study-row' },
+          h('input', {
+            className: 'dsh-study-input',
+            style: { width: 220, height: 34 },
+            placeholder: '搜索课程名称或编号…',
+            value: sourceCourseQuery,
+            onChange: e => setSourceCourseQuery(e.target.value),
+          }),
+          h('button', { type: 'button', className: 'dsh-study-btn', onClick: () => setShowAddSource(v => !v) },
+            h(Icon.Plus, { size: 15 }), showAddSource ? '收起' : '添加题库源'))),
 
       showAddSource ? h('form', {
         className: 'dsh-study-box dsh-study-stack',
@@ -1746,6 +1790,10 @@ export function apply(ctx) {
 
       ...uniqueSources.map(src => {
         const pickedForSrc = checkedCourses.filter(x => x.source_id === src.source_id)
+        const sq = sourceCourseQuery.trim().toLowerCase()
+        const visibleCourses = sq
+          ? src.courses.filter(c => `${c.course_name || ''} ${c.course_code || ''}`.toLowerCase().includes(sq))
+          : src.courses
         return h('section', { className: 'dsh-study-box dsh-study-stack', key: src.source_id },
           h('div', { className: 'dsh-study-between' },
             h('div', null,
@@ -1774,30 +1822,32 @@ export function apply(ctx) {
               }, h(Icon.Trash2, { size: 14 })) : null)),
 
           src.courses.length
-            ? h('div', { className: 'dsh-study-table-wrap' },
-              h('table', { className: 'dsh-study-table' },
-                h('thead', null, h('tr', null,
-                  h('th', { style: { width: 42 } }, '选择'),
-                  h('th', null, '课程名称'),
-                  h('th', { style: { width: 90 } }, '题目数'),
-                  h('th', { style: { width: 110 } }, '状态'))),
-                h('tbody', null, src.courses.map(c => {
-                  const checked = checkedCourses.some(x => x.source_id === src.source_id && x.code === c.course_code)
-                  return h('tr', { key: c.course_code },
-                    h('td', null, h('input', {
-                      type: 'checkbox', checked,
-                      onChange: () => toggleCheckedCourse(src.source_id, c.course_code),
-                    })),
-                    h('td', null, h('span', { style: { fontWeight: 500 } }, c.course_name || c.course_code)),
-                    h('td', null, `${c.total_questions} 题`),
-                    h('td', null, c.installed
-                      ? h('span', { className: 'dsh-study-tag ok' }, '已下载')
-                      : c.installed_elsewhere
-                        ? (c.update_available
-                          ? h('span', { className: 'dsh-study-tag accent', title: `本地已由「${c.installed_via_source_name}」下载，当前源有新版本` }, '可更新')
-                          : h('span', { className: 'dsh-study-tag ok', title: `已由「${c.installed_via_source_name}」下载，内容一致` }, '已下载'))
-                        : h('span', { className: 'dsh-study-tag' }, '未下载')))
-                }))))
+            ? (visibleCourses.length
+              ? h('div', { className: 'dsh-study-table-wrap' },
+                h('table', { className: 'dsh-study-table' },
+                  h('thead', null, h('tr', null,
+                    h('th', { style: { width: 42 } }, '选择'),
+                    h('th', null, '课程名称'),
+                    h('th', { style: { width: 90 } }, '题目数'),
+                    h('th', { style: { width: 110 } }, '状态'))),
+                  h('tbody', null, visibleCourses.map(c => {
+                    const checked = checkedCourses.some(x => x.source_id === src.source_id && x.code === c.course_code)
+                    return h('tr', { key: c.course_code },
+                      h('td', null, h('input', {
+                        type: 'checkbox', checked,
+                        onChange: () => toggleCheckedCourse(src.source_id, c.course_code),
+                      })),
+                      h('td', null, h('span', { style: { fontWeight: 500 } }, c.course_name || c.course_code)),
+                      h('td', null, `${c.total_questions} 题`),
+                      h('td', null, c.installed
+                        ? h('span', { className: 'dsh-study-tag ok' }, '已下载')
+                        : c.installed_elsewhere
+                          ? (c.update_available
+                            ? h('span', { className: 'dsh-study-tag accent', title: `本地已由「${c.installed_via_source_name}」下载，当前源有新版本` }, '可更新')
+                            : h('span', { className: 'dsh-study-tag ok', title: `已由「${c.installed_via_source_name}」下载，内容一致` }, '已下载'))
+                          : h('span', { className: 'dsh-study-tag' }, '未下载')))
+                  }))))
+              : h('div', { className: 'dsh-study-muted', style: { fontSize: 12.5, padding: '6px 2px' } }, '未匹配到相关课程'))
             : null)
       }))
 

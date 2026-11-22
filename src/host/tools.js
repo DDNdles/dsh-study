@@ -322,25 +322,60 @@ export function searchQuestions(db, papers, args) {
       AND kp.question_id=q.id AND kp.kp_id IN (${kps.map(() => '?').join(',')}))`)
     params.push(...kps)
   }
-  let fts = ''
   const query = String(args.query ?? '').trim()
-  if (query) {
-    const tokens = query.match(/[\p{L}\p{N}]+/gu) ?? []
-    if (tokens.length) {
-      fts = `JOIN questions_fts ON questions_fts.source_id=q.source_id AND questions_fts.id=q.id`
-      where.push('questions_fts MATCH ?')
-      params.push(tokens.map(token => `"${token.replaceAll('"', '""')}"`).join(' AND '))
-    }
-  }
   const limit = Math.max(1, Math.min(100, Math.trunc(args.limit ?? 30)))
   const offset = Math.max(0, Math.trunc(args.offset ?? 0))
-  const rows = db.prepare(`
-    SELECT q.source_id,q.id,q.raw_json,q.course_code,q.type,q.difficulty,q.answer_origin,
-      q.source_kind,q.source_year,q.source_ref,q.quarantined
-    FROM questions q ${fts}
-    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY q.course_code,q.id LIMIT ? OFFSET ?
-  `).all(...params, limit, offset)
+
+  const runQuery = (ftsJoin, extraWhere, extraParams) => {
+    const allWhere = [...where, ...extraWhere]
+    const allParams = [...params, ...extraParams]
+    return db.prepare(`
+      SELECT q.source_id,q.id,q.raw_json,q.course_code,q.type,q.difficulty,q.answer_origin,
+        q.source_kind,q.source_year,q.source_ref,q.quarantined
+      FROM questions q ${ftsJoin}
+      ${allWhere.length ? `WHERE ${allWhere.join(' AND ')}` : ''}
+      ORDER BY q.course_code,q.id LIMIT ? OFFSET ?
+    `).all(...allParams, limit, offset)
+  }
+
+  let rows
+  if (!query) {
+    rows = runQuery('', [], [])
+  } else {
+    const terms = query.split(/\s+/).filter(Boolean)
+    const pureAscii = terms.every(t => /^[A-Za-z0-9]+$/.test(t))
+    if (pureAscii) {
+      rows = runQuery(
+        'JOIN questions_fts ON questions_fts.source_id=q.source_id AND questions_fts.id=q.id',
+        ['questions_fts MATCH ?'],
+        [terms.map(t => `"${t.replaceAll('"', '""')}"`).join(' AND ')],
+      )
+    }
+    if (!rows?.length) {
+      // 支持中文子串、LaTeX 公式片段、年份、课号与中文知识点名称搜索
+      const likeWhere = []
+      const likeParams = []
+      for (const term of terms) {
+        const escaped = term.replace(/[\\%_]/g, '\\$&')
+        const pattern = `%${escaped}%`
+        likeWhere.push(`(
+          q.stem_md LIKE ? ESCAPE '\\'
+          OR q.answer_md LIKE ? ESCAPE '\\'
+          OR q.solution_md LIKE ? ESCAPE '\\'
+          OR q.source_ref LIKE ? ESCAPE '\\'
+          OR q.id LIKE ? ESCAPE '\\'
+          OR q.course_code LIKE ? ESCAPE '\\'
+          OR EXISTS (
+            SELECT 1 FROM question_kp kp
+            JOIN taxonomy t ON t.source_id=kp.source_id AND t.course_code=kp.course_code AND t.kp_id=kp.kp_id
+            WHERE kp.source_id=q.source_id AND kp.question_id=q.id AND t.name LIKE ? ESCAPE '\\'
+          )
+        )`)
+        likeParams.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern)
+      }
+      rows = runQuery('', likeWhere, likeParams)
+    }
+  }
   return rows.map(row => ({
     ...row,
     question: JSON.parse(row.raw_json),

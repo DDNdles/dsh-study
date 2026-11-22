@@ -500,3 +500,28 @@ test('SourceService.list auto-detects identical courses installed via another so
   assert.equal(rowB.installed_via_source_name, '源 A')
   assert.equal(rowB.update_available, false)
 })
+
+test('searchQuestions supports Chinese substrings, LaTeX fragments, and taxonomy names', async t => {
+  const { directory, db, sources } = await setup(t)
+  const bankDir = path.join(directory, 'zh-search-bank')
+  await makeBank(bankDir, {
+    questions: [
+      question('MATH1006-zh1', '利用洛必达法则求极限 $\\dfrac{\\sin x}{x}$。'),
+      question('MATH1006-zh2', '判断级数在 $n \\leqslant 10$ 时的收敛性。'),
+    ],
+  })
+  await sources.add({ source_id: 'zh-bank', transport: 'local-dir', location: bankDir })
+  await sources.sync('zh-bank', ['MATH1006'])
+
+  const papers = new PaperService({ db })
+  const byZh = searchQuestions(db, papers, { query: '洛必达 极限', limit: 10 })
+  assert.equal(byZh.length, 1)
+  assert.equal(byZh[0].id, 'MATH1006-zh1')
+
+  const byLatex = searchQuestions(db, papers, { query: '\\sin x', limit: 10 })
+  assert.equal(byLatex.length, 1)
+  assert.equal(byLatex[0].id, 'MATH1006-zh1')
+
+  const byKpName = searchQuestions(db, papers, { query: 'Limits', limit: 10 })
+  assert.equal(byKpName.length, 2)
+})
