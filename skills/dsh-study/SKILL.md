@@ -39,10 +39,11 @@ description: 学习与出卷助手（大模型协作通道）：结合已安装�
    - 若 `gaps` 显示某类题量不足，如实告知缺口，不得编造题库真题。
 2. **可选精炼点评（一次性批量写入）**：
    - 若用户需要讲解/点拨，仅调用一次 `study_paper_get` 获取题面，再一次性调用 `study_paper_comment_update` 写入简短的「考点点拨与易错提醒」（每题 1–2 句，自动渲染为 PDF 红色点评块与 PPT【点评与易错】）。
-3. **导出与立即交付**：
+3. **导出与立即交付（必须交付可点击文件，绝不给失效链接）**：
    - 调用 `study_export_render` 生成 PDF（默认 `ustc-exam`，可选 `gaokao`；`mode: "inline-solution"` 或 `"split"`）和/或 PPT（`format: "ppt", template_id: "review-classic"`）。
-   - 收到 `status: "ok"` 后**立即向用户汇报**（试卷标题、题量、总分、预览/下载链接，提示也可在左侧「学习」面板直接查看），**不再做任何多余检查**。
-   - 若返回 `status: "degraded"`（本机缺少 `xelatex`），如实告知已降级为可打印网页版，并询问是否需要调用 `study_env_install_latex`（仅在用户确认后传 `confirmed: true` 安装轻量 TinyTeX）。
+   - `study_export_render` 会自动把成品文件复制到当前工作区并弹出**原生可点击文件卡片**（`presented_natively: true`，用户点击卡片即可直接打开）。
+   - **严禁输出 `/api/dsh-study/...` 相对链接**（对话界面中无法点开）；若 `presented_natively` 为 `true`，无需重复调用 `present`，直接简明汇报试卷标题、题量、总分与已交付文件名即可结束本轮（提示也可在左侧「学习」面板预览）。若 `presented_natively` 为 `false` 且环境提供 `present` 工具，调用一次 `present` 传入 `delivered_files` 中的路径后立即结束。
+   - 若返回 `status: "degraded"`（本机缺少 `xelatex`），如实告知已降级为可打印网页版文件，并询问是否需要调用 `study_env_install_latex`（仅在用户确认后传 `confirmed: true` 安装轻量 TinyTeX）。
 
 ### 4. 可选 AI 变式题边界
 - 默认禁止 AI 生成变式题；仅当全局设置已开启且用户明确要求时，才调用 `study_paper_variant_propose` 暂存并等待用户确认后再 `study_paper_variant_commit`。

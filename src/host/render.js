@@ -754,9 +754,7 @@ function renderFiguresLatex(figures, figMap) {
 function groupItems(items) {
   const groups = []
   for (const item of items) {
-    const key = item.section_title && item.section_title !== '题目'
-      ? item.section_title
-      : defaultSectionTitle(item.question?.type)
+    const key = cleanSectionTitle(item.section_title, item.question?.type)
     let group = groups.at(-1)
     if (!group || group.key !== key) {
       group = { key, title: key, items: [], score: 0 }
@@ -766,6 +764,26 @@ function groupItems(items) {
     group.score += Number(item.score) || 0
   }
   return groups
+}
+
+export function cleanSectionTitle(raw, fallbackType) {
+  let text = String(raw ?? '').trim()
+  if (!text || text === '题目') return defaultSectionTitle(fallbackType)
+  // 剥离模型可能自带的前缀序号（模板会自动按大题顺序加「一.」「二.」等编号）
+  text = text
+    .replace(/^(?:第\s*[一二三四五六七八九十百\d]+\s*(?:部分|大题|节)\s*[：:、.．\s]*)/u, '')
+    .replace(/^(?:[（(]\s*[一二三四五六七八九十\d]+\s*[)）]\s*[：:、.．\s]*)/u, '')
+    .replace(/^(?:[一二三四五六七八九十]+(?:\s*[、.．:：]\s*|\s+))/u, '')
+    .replace(/^(?:\d+\s*[、.．:：]\s*)/u, '')
+    .trim()
+  // 剥离括号内的分值/题量说明（模板会自动汇总并渲染「共 X 分，每小题 Y 分」）
+  const scoreParenRe = /\s*[（(][^）)]*(?:每\s*(?:小)?题|共\s*\d+|本大题|\d+(?:\.\d+)?\s*分|\d+\s*(?:小)?题)[^）)]*[)）]\s*$/u
+  while (scoreParenRe.test(text)) {
+    text = text.replace(scoreParenRe, '').trim()
+  }
+  // 剥离末尾无括号的分值/题量说明
+  text = text.replace(/[\s，,、;；]*(?:本大题)?(?:共\s*\d+\s*(?:小)?题[\s，,]*)?(?:每\s*(?:小)?题\s*\d+(?:\.\d+)?\s*分[\s，,]*)?(?:共\s*\d+(?:\.\d+)?\s*分)\s*$/u, '').trim()
+  return text || defaultSectionTitle(fallbackType)
 }
 
 function defaultSectionTitle(type) {

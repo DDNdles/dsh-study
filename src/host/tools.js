@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
+import path from 'node:path'
 import { assertSafeRelative } from './validation.js'
 
 const object = (properties = {}, required = []) => ({
@@ -126,7 +129,7 @@ export function registerTools(ctx, services) {
       score: number('默认每题分值', { minimum: 0.5 }),
       seed: number('可复现随机种子'),
       sections: array(object({
-        title: string('大题名称'),
+        title: string('大题纯名称（如「填空题」「计算题」；不要带「一、」编号或「共 X 分」说明，模板会自动生成）'),
         count: number('该大题题数', { minimum: 0, maximum: 200 }),
         score: number('每小题分值', { minimum: 0.5 }),
       }, ['title', 'count', 'score'])),
@@ -138,7 +141,7 @@ export function registerTools(ctx, services) {
         source_id: string('题库源标识'),
         question_id: string('题目 ID'),
         score: number('分值', { minimum: 0.5 }),
-        section_title: string('所属大题标题'),
+        section_title: string('所属大题纯名称（如「填空题」「解答题」；不要自带编号或分值）'),
         comment_md: string('针对性学习点评（渲染为 PDF 红色点评与 PPT 易错提示）'),
       }, ['source_id', 'question_id']), { minItems: 1 }),
     }, ['items'])],
@@ -198,6 +201,7 @@ export function registerTools(ctx, services) {
       }),
     }, ['paper_id', 'format'])],
   ]
+  const pendingDeliveries = new WeakMap()
   for (const [name, description, parameters] of definitions) {
     ctx.effect(() => ctx.tools.register({
       name,
@@ -205,13 +209,29 @@ export function registerTools(ctx, services) {
       parameters,
       output: toolOutput,
       async execute(args, exec = {}) {
-        return plainJson(await execute(name, args ?? {}, exec, services))
+        return plainJson(await execute(name, args ?? {}, exec, services, ctx, pendingDeliveries))
       },
     }))
   }
+
+  // 与宿主官方 deliverables/presented 机制对齐：study_export_render 完成后自动挂载原生可点击文件卡片
+  if (typeof ctx.on === 'function') {
+    ctx.on('tools/result', (exec, result) => {
+      const delivery = pendingDeliveries.get(exec)
+      pendingDeliveries.delete(exec)
+      if (!delivery || result?.isError || exec?.signal?.aborted) return
+      try {
+        delivery.session.append('deliverables/presented', {
+          turn: delivery.turn,
+          callId: exec.callId,
+          files: delivery.files,
+        })
+      } catch {}
+    })
+  }
 }
 
-async function execute(name, args, exec, services) {
+async function execute(name, args, exec, services, ctx, pendingDeliveries) {
   const { sources, mistakes, papers, render, db, config } = services
   const signal = exec.signal
   switch (name) {
@@ -286,30 +306,62 @@ async function execute(name, args, exec, services) {
         template_id: args.template_id || (args.format === 'ppt' ? config.defaultPptTemplate : config.defaultPdfTemplate),
         mode: args.mode || config.defaultPdfMode,
       }, signal)
-      const arts = rendered.artifacts ?? {}
-      const fileLink = rel => (rel ? `/api/dsh-study/file?path=${encodeURIComponent(rel)}` : undefined)
-      const downloadLink = rel => (rel ? `/api/dsh-study/file?path=${encodeURIComponent(rel)}&download=1` : undefined)
-      const links = {}
-      if (arts.inlinePdf) { links.pdf_preview = fileLink(arts.inlinePdf); links.pdf_download = downloadLink(arts.inlinePdf) }
-      if (arts.questionPdf) { links.question_pdf_preview = fileLink(arts.questionPdf); links.question_pdf_download = downloadLink(arts.questionPdf) }
-      if (arts.answerPdf) { links.answer_pdf_preview = fileLink(arts.answerPdf); links.answer_pdf_download = downloadLink(arts.answerPdf) }
-      if (arts.pptx) { links.pptx_download = downloadLink(arts.pptx) }
-      if (arts.html) { links.html_preview = fileLink(arts.html) }
+      const paper = papers.get(rendered.paper_id)
+      const paperTitle = paper?.title || '练习卷'
+      const session = exec?.agent?.session
+      const workingDirectory = exec?.agent?.ctx?.get?.('workingDirectory') ?? ctx?.get?.('workingDirectory')
+      const workspaceCwd = session?.header?.cwd
+        || (workingDirectory && exec?.agent ? await workingDirectory.ensure(exec.agent, signal).catch(() => '') : '')
+      const deliveredFiles = await materializeDeliverables({
+        rendered,
+        paperTitle,
+        dataDir: config.dataDir,
+        workspaceCwd,
+        agentCtx: exec?.agent?.ctx,
+        signal,
+      })
+
+      // 自动准备宿主原生文件卡片事件（DSH 与词元工坊通用 deliverables/presented）
+      let presentedNatively = false
+      if (session && typeof session.append === 'function' && deliveredFiles.length && pendingDeliveries) {
+        const agents = ctx?.get?.('agents') ?? exec?.agent?.ctx?.get?.('agents')
+        const boundary = agents?.turnBoundaryOf?.(session)
+        if (boundary && boundary.openTurnStartSeq !== null) {
+          pendingDeliveries.set(exec, {
+            session,
+            turn: boundary.lastTurn,
+            files: deliveredFiles.map(f => ({ path: f.presentPath, description: f.description })),
+          })
+          presentedNatively = true
+        }
+      }
+
       return {
         ok: true,
         data: {
           export_id: rendered.export_id,
           paper_id: rendered.paper_id,
+          paper_title: paperTitle,
+          question_count: paper?.items?.length ?? undefined,
+          total_score: paper?.items?.reduce((sum, item) => sum + Number(item.score || 0), 0) ?? undefined,
           format: rendered.format,
           template_id: rendered.template_id,
           export_mode: rendered.export_mode,
           status: rendered.status,
           degraded_reason: rendered.degraded_reason ?? null,
-          links,
+          delivered_files: deliveredFiles.map(f => ({
+            file_name: f.fileName,
+            path: f.presentPath,
+            relative_path: f.relativePath,
+            description: f.description,
+          })),
+          presented_natively: presentedNatively,
           done: rendered.status === 'ok',
           delivery_note: rendered.status === 'ok'
-            ? '导出已成功完成且内置模板已校验通过。请直接向用户汇报试卷标题、题量、总分与上方预览/下载链接并立即结束本轮；除非用户明确要求打开浏览器检查排版，否则不要调用浏览器、截图或脚本做二次核查，更不要修改任何插件或模板文件。'
-            : '当前因缺少本机 XeLaTeX 已降级为可打印网页版，请如实告知用户并提供 html_preview 链接，可询问用户是否确认安装轻量 TinyTeX（study_env_install_latex）。',
+            ? (presentedNatively
+              ? '成品文件已保存到当前工作区并自动挂载为原生可点击文件卡片（用户点击卡片即可直接打开）。请直接简明汇报试卷标题、题量、总分与已交付文件名并立即结束本轮；严禁输出 /api/dsh-study/... 相对链接（对话中点不开），也无需重复调用 present；除非用户明确要求打开浏览器检查排版，否则不要调用浏览器或修改插件文件。'
+              : '成品文件已保存到 delivered_files 路径。若当前环境提供 present 工具，请调用一次 present 传入 delivered_files 的路径交付可点击文件卡片后立即结束；严禁输出 /api/dsh-study/... 相对链接（对话中点不开），也不要调用浏览器或修改插件文件。')
+            : '当前因缺少本机 XeLaTeX 已降级为可打印网页版（已作为文件交付），请如实告知用户，并可询问用户是否确认安装轻量 TinyTeX（study_env_install_latex）。',
         },
       }
     }
@@ -322,6 +374,91 @@ function assertUserConfirmation(exec, confirmed) {
   if (confirmed !== true || !hasRecentUserConfirmation(exec.agent?.session)) {
     throw new Error('未执行写入：请先向用户展示完整草稿内容，待用户在下一条消息中明确确认后再提交。')
   }
+}
+
+function sanitizeFileBaseName(name, fallback = '练习卷') {
+  const cleaned = String(name ?? '')
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 72)
+  return cleaned || fallback
+}
+
+async function copyFileNonDestructive(srcPath, destDir, baseName, ext) {
+  await fs.mkdir(destDir, { recursive: true })
+  for (let index = 1; index <= 99; index++) {
+    const fileName = index === 1 ? `${baseName}${ext}` : `${baseName}-${index}${ext}`
+    const destPath = path.join(destDir, fileName)
+    try {
+      await fs.copyFile(srcPath, destPath, fsConstants.COPYFILE_EXCL)
+      return { destPath, fileName }
+    } catch (error) {
+      if (error?.code === 'EEXIST') continue
+      throw error
+    }
+  }
+  const fallbackName = `${baseName}-${Date.now()}${ext}`
+  const destPath = path.join(destDir, fallbackName)
+  await fs.copyFile(srcPath, destPath)
+  return { destPath, fileName: fallbackName }
+}
+
+export async function materializeDeliverables({ rendered, paperTitle, dataDir, workspaceCwd, agentCtx, signal }) {
+  const arts = rendered.artifacts ?? {}
+  const base = sanitizeFileBaseName(paperTitle, rendered.format === 'ppt' ? '讲评课件' : '练习卷')
+  const candidates = []
+  if (rendered.format === 'ppt' && arts.pptx) {
+    candidates.push({ rel: arts.pptx, baseName: `${base}（讲评课件）`, ext: '.pptx', description: '讲评 PPT 课件' })
+  } else if (arts.inlinePdf) {
+    candidates.push({ rel: arts.inlinePdf, baseName: base, ext: '.pdf', description: 'PDF 试卷（含解析）' })
+  } else if (arts.questionPdf || arts.answerPdf) {
+    if (arts.questionPdf) {
+      candidates.push({ rel: arts.questionPdf, baseName: `${base}（原题卷）`, ext: '.pdf', description: 'PDF 原题卷' })
+    }
+    if (arts.answerPdf) {
+      candidates.push({ rel: arts.answerPdf, baseName: `${base}（答案与解析）`, ext: '.pdf', description: 'PDF 答案与解析卷' })
+    }
+  } else if (arts.html) {
+    candidates.push({ rel: arts.html, baseName: `${base}（可打印网页版）`, ext: '.html', description: '可打印试卷网页版' })
+  }
+
+  const dshFs = agentCtx?.get?.('fs')
+  const out = []
+  for (const item of candidates) {
+    const srcAbs = path.join(dataDir, ...item.rel.split('/'))
+    try {
+      const stat = await fs.stat(srcAbs)
+      if (!stat.isFile() || stat.size <= 0) continue
+    } catch {
+      continue
+    }
+
+    let finalAbs = srcAbs
+    let fileName = `${item.baseName}${item.ext}`
+    let relativePath = null
+    if (workspaceCwd) {
+      try {
+        const copied = await copyFileNonDestructive(srcAbs, workspaceCwd, item.baseName, item.ext)
+        finalAbs = copied.destPath
+        fileName = copied.fileName
+        relativePath = copied.fileName
+      } catch {
+        // 工作区不可写时回退到原始导出文件
+      }
+    }
+
+    let presentPath = finalAbs
+    if (dshFs && workspaceCwd && relativePath) {
+      try {
+        const target = await dshFs.resolve(relativePath, { cwd: workspaceCwd, signal })
+        presentPath = dshFs.processPath(target)
+      } catch {}
+    }
+
+    out.push({ fileName, presentPath, relativePath, description: item.description })
+  }
+  return out
 }
 
 function hasRecentUserConfirmation(session) {

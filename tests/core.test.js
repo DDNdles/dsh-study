@@ -10,9 +10,9 @@ import { FeedbackService } from '../src/host/feedback.js'
 import { LatexEnvService } from '../src/host/latex-env.js'
 import { MistakeService, scheduleReview } from '../src/host/mistakes.js'
 import { PaperService } from '../src/host/papers.js'
-import { RenderService } from '../src/host/render.js'
+import { cleanSectionTitle, RenderService } from '../src/host/render.js'
 import { SourceService } from '../src/host/sources.js'
-import { questionDetails, searchQuestions } from '../src/host/tools.js'
+import { materializeDeliverables, questionDetails, searchQuestions } from '../src/host/tools.js'
 import { assertManifest, assertQuestion } from '../src/host/validation.js'
 
 const projectRoot = path.resolve(import.meta.dirname, '..')
@@ -560,4 +560,40 @@ test('FeedbackService persists feedback, builds GitLab/GitHub pre-filled links, 
   assert.ok(res.issue_channels.some(ch => ch.id === 'github' && ch.url.includes('DDNdles/USTC-Question-Bank/issues/new')))
   assert.equal(feedback.list().length, 1)
   assert.equal(feedback.list()[0].question_id, 'MATH1006-fb1')
+})
+
+test('materializeDeliverables copies clean Chinese-named PDFs into workspace without overwriting', async t => {
+  const { directory } = await setup(t)
+  const relPdf = 'exports/p1/e1/inline.pdf'
+  const srcAbs = path.join(directory, ...relPdf.split('/'))
+  await fs.mkdir(path.dirname(srcAbs), { recursive: true })
+  await fs.writeFile(srcAbs, Buffer.from('%PDF-1.4 test content'))
+
+  const workspaceDir = path.join(directory, 'user-workspace')
+  const first = await materializeDeliverables({
+    rendered: { format: 'pdf', artifacts: { inlinePdf: relPdf } },
+    paperTitle: '《数学分析》: 期中/模拟卷',
+    dataDir: directory,
+    workspaceCwd: workspaceDir,
+  })
+  assert.equal(first.length, 1)
+  assert.equal(first[0].fileName, '《数学分析》 期中模拟卷.pdf')
+  assert.equal(first[0].relativePath, '《数学分析》 期中模拟卷.pdf')
+  assert.equal((await fs.readFile(first[0].presentPath, 'utf8')), '%PDF-1.4 test content')
+
+  // Second export with same title creates -2 instead of overwriting existing file
+  const second = await materializeDeliverables({
+    rendered: { format: 'pdf', artifacts: { inlinePdf: relPdf } },
+    paperTitle: '《数学分析》: 期中/模拟卷',
+    dataDir: directory,
+    workspaceCwd: workspaceDir,
+  })
+  assert.equal(second[0].fileName, '《数学分析》 期中模拟卷-2.pdf')
+})
+
+test('cleanSectionTitle strips redundant numbering and score annotations while keeping real subtitles', () => {
+  assert.equal(cleanSectionTitle('一、填空题（每题 5 分，共 20 分）', 'blank'), '填空题')
+  assert.equal(cleanSectionTitle('二. 计算与解答题 (共30分, 每小题10分)', 'solve'), '计算与解答题')
+  assert.equal(cleanSectionTitle('第一部分：单项选择题（共 4 小题，每题 5 分）', 'single'), '单项选择题')
+  assert.equal(cleanSectionTitle('微积分（极限与连续）', 'solve'), '微积分（极限与连续）')
 })
