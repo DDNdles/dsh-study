@@ -10,6 +10,7 @@ import { AllPackages } from 'mathjax-full/js/input/tex/AllPackages.js'
 import { SVG } from 'mathjax-full/js/output/svg.js'
 import { liteAdaptor } from 'mathjax-full/js/adaptors/liteAdaptor.js'
 import { RegisterHTMLHandler } from 'mathjax-full/js/handlers/html.js'
+import { createStageError, formatErrorMessage } from './errors.js'
 import { runProcess } from './process.js'
 import { LatexEnvService } from './latex-env.js'
 
@@ -92,7 +93,7 @@ export class RenderService {
     await fs.mkdir(outputDir, { recursive: true })
     let result
     if (format === 'ppt') {
-      result = await this.renderPpt(paper, template, outputDir, signal)
+      result = await this.renderPpt(paper, template, outputDir, options, signal)
     } else if (format === 'pdf') {
       if (!['inline-solution', 'split'].includes(mode)) throw new Error('PDF 版式仅支持「题目后附解析」或「原题与答案分开」')
       result = await this.renderPdf(paper, template, mode, options, outputDir, signal)
@@ -168,8 +169,11 @@ export class RenderService {
     }
 
     const artifacts = {}
+    const texPaths = []
+    const logPaths = []
     let log = ''
     let degradedReason = null
+    let errorExcerpt = null
     const splitLayout = options.splitLayout === 'combined' ? 'combined' : 'two-files'
 
     const outputs = mode === 'split'
@@ -200,16 +204,31 @@ export class RenderService {
       const texPath = path.join(outputDir, `${output.name}.tex`)
       await fs.writeFile(texPath, tex, 'utf8')
       artifacts[`${output.name}Tex`] = this.publicPath(texPath)
+      texPaths.push(texPath)
+
       let compiled = await this.compileTex(texPath, outputDir, signal)
       log += compiled.log
-      if (!compiled.ok && !/unavailable/i.test(compiled.reason ?? '')) {
+      const firstCompiled = compiled
+      if (!compiled.ok && !/未检测到本机 xelatex|不可用|unavailable/i.test(compiled.reason ?? '')) {
+        // 保留首次失败的 .tex 与 .log 现场，避免安全降级重试覆盖定位线索
+        const firstTexPath = path.join(outputDir, `${output.name}.first-attempt.tex`)
+        const firstLogPath = path.join(outputDir, `${output.name}.first-attempt.log`)
+        await fs.writeFile(firstTexPath, tex, 'utf8').catch(() => {})
+        await fs.writeFile(firstLogPath, compiled.log || '', 'utf8').catch(() => {})
+        texPaths.push(firstTexPath)
+        logPaths.push(firstLogPath)
+
         // Retry once with ultra-safe LaTeX fallback sanitization
         tex = await generateTex(true)
         await fs.writeFile(texPath, tex, 'utf8')
         const retried = await this.compileTex(texPath, outputDir, signal)
         log += `\n--- 安全降级重试 ---\n${retried.log}`
-        if (retried.ok) compiled = retried
-        else compiled = retried
+        compiled = retried
+      }
+
+      if (compiled.logPath) {
+        artifacts[`${output.name}Log`] = this.publicPath(compiled.logPath)
+        logPaths.push(compiled.logPath)
       }
 
       const artifactName = output.name === 'paper' ? 'questionPdf'
@@ -218,6 +237,7 @@ export class RenderService {
         artifacts[artifactName] = this.publicPath(path.join(outputDir, `${output.name}.pdf`))
       } else {
         degradedReason = compiled.reason
+        errorExcerpt = firstCompiled.errorExcerpt || compiled.errorExcerpt || null
       }
       artifacts[`${output.name}TexPath`] = this.publicPath(texPath)
     }
@@ -242,9 +262,13 @@ export class RenderService {
     return {
       artifacts,
       degraded_reason: degradedReason,
+      error_excerpt: errorExcerpt,
       log,
+      tex_paths: [...new Set(texPaths)],
+      log_paths: [...new Set(logPaths)],
       preview_url: artifacts.inlinePdf || artifacts.questionPdf || artifacts.html,
       output_dir: this.publicPath(outputDir),
+      output_dir_abs: outputDir,
     }
   }
 
@@ -275,20 +299,47 @@ export class RenderService {
     const env = (binDir && binDir !== '.')
       ? { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` }
       : undefined
+    const texBaseName = path.basename(texPath)
+    const stemName = texBaseName.replace(/\.tex$/i, '')
+    const compileLogPath = path.join(cwd, `${stemName}.compile.log`)
+    const texLogPath = path.join(cwd, `${stemName}.log`)
     let log = ''
     try {
       for (let pass = 0; pass < 2; pass++) {
         if (signal?.aborted) throw signal.reason ?? new Error('导出已取消')
         const result = await runProcess(this.subprocess, [
           executable, '-no-shell-escape', '-halt-on-error', '-interaction=nonstopmode',
-          '-file-line-error', path.basename(texPath),
-        ], { cwd, env, signal, timeoutMs: 60_000, check: false })
-        log += `${result.stdout}\n${result.stderr}`
-        if (result.exitCode !== 0) return { ok: false, reason: `LaTeX 编译未通过（第 ${pass + 1} 遍），已提供可打印网页版`, log }
+          '-file-line-error', texBaseName,
+        ], { cwd, env, signal, timeoutMs: 90_000, check: false })
+        log += `=== XeLaTeX Pass ${pass + 1} (exit=${result.exitCode}) ===\n${result.stdout}\n${result.stderr}\n`
+        if (result.exitCode !== 0) {
+          await fs.writeFile(compileLogPath, log, 'utf8').catch(() => {})
+          const nativeLog = await fs.readFile(texLogPath, 'utf8').catch(() => '')
+          const excerpt = extractLatexErrorSummary(log, nativeLog, texBaseName)
+          const preferredLogPath = nativeLog ? texLogPath : compileLogPath
+          const summary = excerpt ? `：${excerpt}` : ''
+          return {
+            ok: false,
+            reason: `LaTeX 编译未通过（第 ${pass + 1} 遍）${summary}；已提供可打印网页版（日志：${preferredLogPath}）`,
+            errorExcerpt: excerpt,
+            logPath: preferredLogPath,
+            log,
+          }
+        }
       }
-      return { ok: true, log }
+      await fs.writeFile(compileLogPath, log, 'utf8').catch(() => {})
+      return { ok: true, log, logPath: compileLogPath }
     } catch (error) {
-      return { ok: false, reason: `LaTeX 编译异常：${error.message}`, log }
+      const msg = formatErrorMessage(error, '未知编译异常')
+      log += `\n=== Exception ===\n${msg}\n`
+      await fs.writeFile(compileLogPath, log, 'utf8').catch(() => {})
+      return {
+        ok: false,
+        reason: `LaTeX 编译异常：${msg}（日志：${compileLogPath}）`,
+        errorExcerpt: msg,
+        logPath: compileLogPath,
+        log,
+      }
     }
   }
 
@@ -336,164 +387,196 @@ export class RenderService {
     }
   }
 
-  async renderPpt(paper, template, outputDir, signal) {
-    if (signal?.aborted) throw signal.reason ?? new Error('导出已取消')
-    const assets = await this.loadPptAssets()
-    const pptx = new PptxGenJS()
-    pptx.layout = 'LAYOUT_WIDE'
-    pptx.author = 'dsh-study'
-    pptx.subject = '课程讲评与错题复盘'
-    pptx.title = paper.title
-    pptx.company = 'dsh-study'
-    const theme = {
-      background: stripHash(template.theme?.background ?? 'FAF9F5'),
-      text: stripHash(template.theme?.text ?? '15181E'),
-      body: stripHash(template.theme?.body ?? '2B2F36'),
-      accent: stripHash(template.theme?.accent ?? '1F5FC9'),
-      highlight: stripHash(template.theme?.highlight ?? 'B45309'),
-      muted: stripHash(template.theme?.muted ?? '6B6F76'),
-      border: stripHash(template.theme?.border ?? 'DAD7CE'),
-      railMuted: stripHash(template.theme?.railMuted ?? 'B9B6AC'),
-    }
-    pptx.theme = { headFontFace: PPTX_TITLE_FONT, bodyFontFace: PPTX_TITLE_FONT, lang: 'zh-CN' }
-
-    const modeLabel = ({ mistake: '错题巩固', exam: '模拟测试', topic: '专题练习' })[paper.mode] ?? '练习讲评'
-    const totalQuestions = paper.items.length
-
-    // 使用母版复用内容页底图，避免多页重复写入导致 .pptx 体积膨胀
-    if (assets.bgContent) {
-      pptx.defineSlideMaster({
-        title: 'DSH_CONTENT',
-        background: { data: assets.bgContent },
-      })
-    }
-
-    const thumbnailRoot = path.join(outputDir, 'slides')
-    await fs.mkdir(thumbnailRoot, { recursive: true })
-    const slides = []
-    const emit = async (items, meta, notes) => {
-      const useContentMaster = Boolean(assets.bgContent && items.some(it => it.type === 'bg-image'))
-      const slide = useContentMaster ? pptx.addSlide({ masterName: 'DSH_CONTENT' }) : pptx.addSlide()
-      if (!useContentMaster) slide.background = { color: theme.background }
-      drawScenePptx(pptx, slide, items, assets.fontFiles, useContentMaster)
-      if (notes) slide.addNotes(notes)
-      const file = path.join(thumbnailRoot, `slide-${String(slides.length + 1).padStart(3, '0')}.png`)
-      await fs.writeFile(file, renderSvgToPng(sceneToSvg(items, theme), SLIDE_W, assets.fontFiles))
-      slides.push({ ...meta, thumbnail_path: this.publicPath(file) })
-    }
-
-    // --- 封面页 ---
-    await emit(coverScene(theme, {
-      kicker: modeLabel,
-      title: paper.title,
-      assets,
-    }), { title: paper.title, type: 'cover', question_id: null })
-
-    for (const [index, item] of paper.items.entries()) {
+  async renderPpt(paper, template, outputDir, options = {}, signal) {
+    let stage = 'ppt-init'
+    const errorLogPath = path.join(outputDir, 'export-error.log')
+    try {
       if (signal?.aborted) throw signal.reason ?? new Error('导出已取消')
-      const question = item.question
-      const refShort = truncateText(question.source?.ref ?? '', 34)
-      const badge = item.is_ai_variant ? 'AI 变式' : item.is_original_redo ? '错题重做' : ''
-      const qType = typeLabel(question.type)
+      const rasterizeText = Boolean(options?.rasterizeText)
+      const maxThumbnails = Number.isInteger(options?.maxThumbnails) ? Math.max(0, options.maxThumbnails) : 40
+      const assets = await this.loadPptAssets()
+      const pptx = new PptxGenJS()
+      pptx.layout = 'LAYOUT_WIDE'
+      pptx.author = 'dsh-study'
+      pptx.subject = '课程讲评与错题复盘'
+      pptx.title = paper.title
+      pptx.company = 'dsh-study'
+      const theme = {
+        background: stripHash(template.theme?.background ?? 'FAF9F5'),
+        text: stripHash(template.theme?.text ?? '15181E'),
+        body: stripHash(template.theme?.body ?? '2B2F36'),
+        accent: stripHash(template.theme?.accent ?? '1F5FC9'),
+        highlight: stripHash(template.theme?.highlight ?? 'B45309'),
+        muted: stripHash(template.theme?.muted ?? '6B6F76'),
+        border: stripHash(template.theme?.border ?? 'DAD7CE'),
+        railMuted: stripHash(template.theme?.railMuted ?? 'B9B6AC'),
+      }
+      pptx.theme = { headFontFace: PPTX_TITLE_FONT, bodyFontFace: PPTX_TITLE_FONT, lang: 'zh-CN' }
 
-      // --- 作答页 ---
-      const qBlocks = [{ text: question.stem.md, color: theme.body }]
-      if (question.options?.length) {
-        for (const opt of question.options) {
-          qBlocks.push({ label: `${opt.key}. `, labelColor: theme.accent, text: opt.md, color: theme.body, indent: 18 })
+      const modeLabel = ({ mistake: '错题巩固', exam: '模拟测试', topic: '专题练习' })[paper.mode] ?? '练习讲评'
+      const totalQuestions = paper.items.length
+
+      // 使用母版复用内容页底图，避免多页重复写入导致 .pptx 体积膨胀
+      if (assets.bgContent) {
+        pptx.defineSlideMaster({
+          title: 'DSH_CONTENT',
+          background: { data: assets.bgContent },
+        })
+      }
+
+      const thumbnailRoot = path.join(outputDir, 'slides')
+      await fs.mkdir(thumbnailRoot, { recursive: true })
+      const slides = []
+      const emit = async (items, meta, notes) => {
+        const slideNo = slides.length + 1
+        stage = `ppt-slide-${slideNo}`
+        const useContentMaster = Boolean(assets.bgContent && items.some(it => it.type === 'bg-image'))
+        const slide = useContentMaster ? pptx.addSlide({ masterName: 'DSH_CONTENT' }) : pptx.addSlide()
+        if (!useContentMaster) slide.background = { color: theme.background }
+        drawScenePptx(pptx, slide, items, assets.fontFiles, { skipBgImage: useContentMaster, rasterizeText })
+        if (notes) slide.addNotes(notes)
+        let thumbnailPath = null
+        if (slideNo <= maxThumbnails) {
+          stage = `ppt-thumb-${slideNo}`
+          const file = path.join(thumbnailRoot, `slide-${String(slideNo).padStart(3, '0')}.png`)
+          await fs.writeFile(file, renderSvgToPng(sceneToSvg(items, theme), SLIDE_W, assets.fontFiles))
+          thumbnailPath = this.publicPath(file)
+        }
+        slides.push({ ...meta, thumbnail_path: thumbnailPath })
+      }
+
+      // --- 封面页 ---
+      stage = 'ppt-cover'
+      await emit(coverScene(theme, {
+        kicker: modeLabel,
+        title: paper.title,
+        assets,
+      }), { title: paper.title, type: 'cover', question_id: null })
+
+      for (const [index, item] of paper.items.entries()) {
+        if (signal?.aborted) throw signal.reason ?? new Error('导出已取消')
+        stage = `ppt-question-${index + 1}`
+        const question = item.question
+        const refShort = truncateText(question.source?.ref ?? '', 34)
+        const badge = item.is_ai_variant ? 'AI 变式' : item.is_original_redo ? '错题重做' : ''
+        const qType = typeLabel(question.type)
+
+        // --- 作答页 ---
+        const qBlocks = [{ text: question.stem.md, color: theme.body }]
+        if (question.options?.length) {
+          for (const opt of question.options) {
+            qBlocks.push({ label: `${opt.key}. `, labelColor: theme.accent, text: opt.md, color: theme.body, indent: 18 })
+          }
+        }
+        const qPages = composeRichPages(qBlocks, {
+          maxWidth: BODY_W,
+          maxHeight: 540,
+          preferredFontSize: 25,
+          minFontSize: 18,
+          defaultColor: theme.body,
+        })
+
+        for (const [pageIdx, page] of qPages.entries()) {
+          const pageSuffix = qPages.length > 1 ? `（${pageIdx + 1}/${qPages.length}）` : ''
+          await emit(contentScene(theme, {
+            number: index + 1,
+            total: totalQuestions,
+            tone: 'question',
+            heading: `${qType} · ${item.score} 分${pageSuffix}`,
+            aside: [badge, refShort].filter(Boolean).join('　·　'),
+            page,
+            assets,
+          }), { title: `第 ${index + 1} 题 · 作答${pageSuffix}`, type: 'question', question_id: question.id })
+        }
+
+        // --- 解析页（长解析自动分页，不截断）---
+        stage = `ppt-solution-${index + 1}`
+        const solBlocks = []
+        if (shouldShowAnswerLine(question)) {
+          solBlocks.push({
+            label: '【答案】',
+            labelColor: theme.highlight,
+            text: question.answer.md,
+            color: theme.body,
+          })
+        }
+        const solBody = resolveSolutionText(question)
+        if (solBody) {
+          solBlocks.push({
+            label: question.type === 'proof' ? '【证明】' : '【详解】',
+            labelColor: theme.highlight,
+            text: solBody,
+            color: theme.body,
+          })
+        }
+        const reviewNote = [item.comment_md, question.quality?.note].filter(Boolean).join('；')
+        if (reviewNote) {
+          solBlocks.push({ label: '【点评与易错】', labelColor: 'C01C28', text: reviewNote, color: 'C01C28' })
+        }
+
+        const solPages = composeRichPages(solBlocks, {
+          maxWidth: BODY_W,
+          maxHeight: 545,
+          preferredFontSize: 22,
+          minFontSize: 16,
+          defaultColor: theme.body,
+        })
+
+        const notesText = [
+          `题目出处：${question.source?.ref || '未标注'}`,
+          `知识点：${(question.tags?.kp_ids ?? []).join('、')}`,
+          `难度：${question.tags?.difficulty ?? 3} / 5`,
+          `答案来源：${originLabel(question.answer.origin)}（${question.answer.origin_detail || '无'}）`,
+          `完整解析：\n${question.solution.md || question.answer.md}`,
+        ].join('\n')
+
+        for (const [pageIdx, page] of solPages.entries()) {
+          const pageSuffix = pageIdx > 0 ? `（续 ${pageIdx + 1}/${solPages.length}）` : ''
+          await emit(contentScene(theme, {
+            number: index + 1,
+            total: totalQuestions,
+            tone: 'solution',
+            heading: `解析 · ${qType}${pageSuffix}`,
+            aside: refShort,
+            page,
+            assets,
+          }), {
+            title: `第 ${index + 1} 题 · 解析${pageIdx > 0 ? ` (${pageIdx + 1})` : ''}`,
+            type: 'solution',
+            question_id: question.id,
+          }, pageIdx === 0 ? notesText : null)
         }
       }
-      const qPages = composeRichPages(qBlocks, {
-        maxWidth: BODY_W,
-        maxHeight: 540,
-        preferredFontSize: 25,
-        minFontSize: 18,
-        defaultColor: theme.body,
-      })
 
-      for (const [pageIdx, page] of qPages.entries()) {
-        const pageSuffix = qPages.length > 1 ? `（${pageIdx + 1}/${qPages.length}）` : ''
-        await emit(contentScene(theme, {
-          number: index + 1,
-          total: totalQuestions,
-          tone: 'question',
-          heading: `${qType} · ${item.score} 分${pageSuffix}`,
-          aside: [badge, refShort].filter(Boolean).join('　·　'),
-          page,
-          assets,
-        }), { title: `第 ${index + 1} 题 · 作答${pageSuffix}`, type: 'question', question_id: question.id })
+      stage = 'ppt-write-file'
+      const file = path.join(outputDir, 'review.pptx')
+      await pptx.writeFile({ fileName: file })
+      const manifest = {
+        paper_id: paper.paper_id,
+        template_id: template.id,
+        title: paper.title,
+        text_layer: !rasterizeText,
+        total_slides: slides.length,
+        thumbnails_generated: slides.filter(s => Boolean(s.thumbnail_path)).length,
+        slides,
       }
-
-      // --- 解析页（长解析自动分页，不截断）---
-      const solBlocks = []
-      if (shouldShowAnswerLine(question)) {
-        solBlocks.push({
-          label: '【答案】',
-          labelColor: theme.highlight,
-          text: question.answer.md,
-          color: theme.body,
-        })
+      const manifestPath = path.join(outputDir, 'slides-manifest.json')
+      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8')
+      return {
+        artifacts: {
+          pptx: this.publicPath(file),
+          slidesManifest: this.publicPath(manifestPath),
+        },
+        preview_url: this.publicPath(manifestPath),
+        output_dir: this.publicPath(outputDir),
+        output_dir_abs: outputDir,
+        tex_paths: [],
+        log_paths: [],
       }
-      const solBody = resolveSolutionText(question)
-      if (solBody) {
-        solBlocks.push({
-          label: question.type === 'proof' ? '【证明】' : '【详解】',
-          labelColor: theme.highlight,
-          text: solBody,
-          color: theme.body,
-        })
-      }
-      const reviewNote = [item.comment_md, question.quality?.note].filter(Boolean).join('；')
-      if (reviewNote) {
-        solBlocks.push({ label: '【点评与易错】', labelColor: 'C01C28', text: reviewNote, color: 'C01C28' })
-      }
-
-      const solPages = composeRichPages(solBlocks, {
-        maxWidth: BODY_W,
-        maxHeight: 545,
-        preferredFontSize: 22,
-        minFontSize: 16,
-        defaultColor: theme.body,
-      })
-
-      const notesText = [
-        `题目出处：${question.source?.ref || '未标注'}`,
-        `知识点：${(question.tags?.kp_ids ?? []).join('、')}`,
-        `难度：${question.tags?.difficulty ?? 3} / 5`,
-        `答案来源：${originLabel(question.answer.origin)}（${question.answer.origin_detail || '无'}）`,
-        `完整解析：\n${question.solution.md || question.answer.md}`,
-      ].join('\n')
-
-      for (const [pageIdx, page] of solPages.entries()) {
-        const pageSuffix = pageIdx > 0 ? `（续 ${pageIdx + 1}/${solPages.length}）` : ''
-        await emit(contentScene(theme, {
-          number: index + 1,
-          total: totalQuestions,
-          tone: 'solution',
-          heading: `解析 · ${qType}${pageSuffix}`,
-          aside: refShort,
-          page,
-          assets,
-        }), {
-          title: `第 ${index + 1} 题 · 解析${pageIdx > 0 ? ` (${pageIdx + 1})` : ''}`,
-          type: 'solution',
-          question_id: question.id,
-        }, pageIdx === 0 ? notesText : null)
-      }
-    }
-
-    const file = path.join(outputDir, 'review.pptx')
-    await pptx.writeFile({ fileName: file })
-    const manifest = { paper_id: paper.paper_id, template_id: template.id, title: paper.title, slides }
-    const manifestPath = path.join(outputDir, 'slides-manifest.json')
-    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8')
-    return {
-      artifacts: {
-        pptx: this.publicPath(file),
-        slidesManifest: this.publicPath(manifestPath),
-      },
-      preview_url: this.publicPath(manifestPath),
-      output_dir: this.publicPath(outputDir),
+    } catch (error) {
+      const detail = error instanceof Error ? (error.stack || error.message) : formatErrorMessage(error)
+      await fs.writeFile(errorLogPath, `stage: ${stage}\nerror: ${detail}\n`, 'utf8').catch(() => {})
+      throw createStageError(stage, error, { output_dir: outputDir, log_path: errorLogPath })
     }
   }
 
@@ -545,10 +628,13 @@ function buildTex(templateId, paper, output, fields, options, source, figureMaps
   if (output.combinedSplit) {
     const qOut = { ...output, combinedSplit: false, showSolutions: false, answerOnly: false }
     const aOut = { ...output, combinedSplit: false, showSolutions: true, answerOnly: true }
-    const preamble = buildPreamble(isGaokao, source, fields, { showSolutions: true, answerOnly: false })
+    const preamble = buildPreamble(isGaokao, source, fields, { showSolutions: false, answerOnly: false })
     const qBody = buildDocumentSection(isGaokao, paper, qOut, fields, figureMaps, safeFallback, true)
     const aBody = buildDocumentSection(isGaokao, paper, aOut, fields, figureMaps, safeFallback, true)
-    return `${preamble}\n\\begin{document}\n${qBody}\n\\clearpage\n${isGaokao ? '' : '\\ShowBindingLinefalse\\AnswerSheetOnlytrue\\ShowInlineSolutiontrue\n'}${aBody}\n\\end{document}\n`
+    const switchCmd = isGaokao
+      ? '\\GaokaoAnswerOnlytrue\\GaokaoShowAnswertrue\n'
+      : '\\ShowBindingLinefalse\\AnswerSheetOnlytrue\\ShowInlineSolutiontrue\n'
+    return `${preamble}\n\\begin{document}\n${qBody}\n\\clearpage\n${switchCmd}${aBody}\n\\end{document}\n`
   }
 
   const preamble = buildPreamble(isGaokao, source, fields, output)
@@ -557,15 +643,16 @@ function buildTex(templateId, paper, output, fields, options, source, figureMaps
 }
 
 function buildPreamble(isGaokao, source, fields, output) {
+  const marker = source.indexOf('% Dynamic question and answer content')
+  const base = marker >= 0 ? source.slice(0, marker) : source
   if (isGaokao) {
-    return source
+    return base
       .replace('__DSH_SHOW_ANSWER__', output.showSolutions ? 'true' : 'false')
+      .replace('__DSH_ANSWER_ONLY__', output.answerOnly ? 'true' : 'false')
       .replace('__DSH_SOLUTION_MODE__', output.showSolutions ? 'show-stay' : 'hide')
       .replace('__DSH_TITLE__', latexText(fields.courseTitle))
       .replace('__DSH_SUBJECT__', latexText(fields.subject))
   }
-  const marker = source.indexOf('% Dynamic question and answer content')
-  const base = marker >= 0 ? source.slice(0, marker) : source
   return base
     .replace('__DSH_EXAM_SCHOOL_TERM__', latexText(fields.schoolTerm))
     .replace('__DSH_EXAM_COURSE_TITLE__', latexText(fields.courseTitle))
@@ -582,18 +669,17 @@ function buildDocumentSection(isGaokao, paper, output, fields, figureMaps, safeF
   const totalScore = paper.items.reduce((sum, item) => sum + Number(item.score || 0), 0)
 
   if (isGaokao) {
+    if (isCombined && !output.answerOnly) {
+      lines.push('\\GaokaoAnswerOnlyfalse')
+      lines.push('\\GaokaoShowAnswerfalse')
+    }
+    lines.push('\\GaokaoHeader')
     if (!output.answerOnly) {
-      lines.push('\\secret')
-      lines.push('\\maketitle')
-      lines.push('\\begin{notice}')
+      lines.push('\\begin{GaokaoNotice}')
       lines.push('  \\item 答卷前，考生务必将自己的姓名、学号或准考证号填写清楚。')
       lines.push('  \\item 客观题请在括号内填涂正确选项；非选择题应写出必要的文字说明、证明过程或演算步骤。')
       lines.push(`  \\item 本试卷共 ${paper.items.length} 题，满分 ${totalScore} 分。`)
-      lines.push('\\end{notice}')
-      lines.push('\\vspace{0.8em}')
-    } else {
-      lines.push(`\\begin{center}{\\Large\\bfseries ${latexText(fields.courseTitle)}——参考答案与解析}\\end{center}`)
-      lines.push('\\vspace{0.6em}')
+      lines.push('\\end{GaokaoNotice}')
     }
   } else {
     if (isCombined && !output.answerOnly) {
@@ -610,8 +696,9 @@ function buildDocumentSection(isGaokao, paper, output, fields, figureMaps, safeF
   for (const [sectionIndex, group] of groups.entries()) {
     const scoreDetail = formatSectionScore(group)
     if (isGaokao) {
-      lines.push(`\\section{${latexText(group.title)}：${scoreDetail}}`)
-      lines.push(`\\begin{enumerate}[label=\\arabic*., start=${sequence + 1}, itemsep=4mm]`)
+      const sectionNumber = chineseNumber(sectionIndex + 1)
+      lines.push(`\\GaokaoSection{${sectionNumber}}{${latexText(group.title)}：${scoreDetail}}`)
+      lines.push(`\\begin{enumerate}[label=\\arabic*., start=${sequence + 1}, leftmargin=2.2em, itemsep=4mm]`)
     } else {
       const sectionNumber = chineseNumber(sectionIndex + 1)
       lines.push(`\\UstcSection{${sectionNumber}}{${scoreDetail}}{${latexText(group.title)}}`)
@@ -629,18 +716,24 @@ function buildDocumentSection(isGaokao, paper, output, fields, figureMaps, safeF
       if (!output.answerOnly) {
         const stemTex = renderMarkdownToLatex(question.stem.md, safeFallback, true)
         const choiceSuffix = (isGaokao && (question.type === 'single' || question.type === 'multi'))
-          ? (output.showSolutions ? ` \\paren[${extractChoiceKey(question.answer.md)}]` : ' \\paren')
+          ? (output.showSolutions ? ` \\GaokaoParen[${extractChoiceKey(question.answer.md)}]` : ' \\GaokaoParen')
           : ''
         lines.push(`${stemTex}${choiceSuffix}`)
         lines.push(...renderFiguresLatex(question.stem.figures, figMap))
 
         if (question.options?.length) {
           if (isGaokao) {
-            lines.push('\\begin{choices}')
-            for (const option of question.options) {
-              lines.push(`  \\item ${renderMarkdownToLatex(option.md, safeFallback, false)}`)
+            if (question.options.length <= 4) {
+              const opts = [...question.options]
+              while (opts.length < 4) opts.push({ md: '' })
+              lines.push(`\\GaokaoOptions{${opts.slice(0, 4).map(o => renderMarkdownToLatex(o.md, safeFallback, false)).join('}{')}}`)
+            } else {
+              lines.push('\\begin{enumerate}[label=\\Alph*., leftmargin=2em, itemsep=1mm]')
+              for (const option of question.options) {
+                lines.push(`  \\item ${renderMarkdownToLatex(option.md, safeFallback, false)}`)
+              }
+              lines.push('\\end{enumerate}')
             }
-            lines.push('\\end{choices}')
           } else {
             const opts = [...question.options]
             while (opts.length < 4) opts.push({ md: '' })
@@ -655,7 +748,7 @@ function buildDocumentSection(isGaokao, paper, output, fields, figureMaps, safeF
         const showAns = shouldShowAnswerLine(question)
 
         if (isGaokao) {
-          lines.push('\\begin{solution}')
+          lines.push('\\begin{GaokaoSolution}')
           if (showAns) {
             lines.push(`\\noindent\\textbf{【答案】}\\ ${renderMarkdownToLatex(question.answer.md, safeFallback, false)}\\par\\smallskip`)
           }
@@ -667,7 +760,7 @@ function buildDocumentSection(isGaokao, paper, output, fields, figureMaps, safeF
           if (comment) {
             lines.push(`\\par\\smallskip\\noindent{\\color{ExamCommentRed}\\textbf{点评：}${renderMarkdownToLatex(comment, safeFallback, false)}}`)
           }
-          lines.push('\\end{solution}')
+          lines.push('\\end{GaokaoSolution}')
         } else {
           if (showAns) {
             lines.push(`\\par\\vspace{1mm}\\noindent{\\bfseries\\heiti 答案：}\\ ${renderMarkdownToLatex(question.answer.md, safeFallback, false)}`)
@@ -1211,7 +1304,122 @@ function contentScene(theme, { number, total, tone, heading, aside, page, assets
   return items
 }
 
-function drawScenePptx(pptx, slide, items, fontFiles = [], skipBgImage = false) {
+function pxToPt(px) {
+  return Math.max(8, Math.round(Number(px || 16) * 0.75 * 10) / 10)
+}
+
+function drawRichPagePptx(slide, page, originX, originY) {
+  const inch = v => v / PX_PER_IN
+  const lines = page.lines ?? []
+  const maxWidth = page.width ?? BODY_W
+
+  let y = 4
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    const isPureText = line.items.length > 0 && line.items.every(it => it.kind === 'text')
+
+    // 将同一段落内连续纯文本行合并为原生可编辑多行文本框，保留精确版面位置与自然换行
+    if (isPureText) {
+      const startY = y
+      const baseIndent = line.indent ?? (line.items[0]?.x ?? 0)
+      const paraId = line.paraId
+      const runs = []
+      let blockH = 0
+      let j = i
+      while (j < lines.length) {
+        const cur = lines[j]
+        if (cur.paraId !== paraId || (cur.indent ?? (cur.items[0]?.x ?? 0)) !== baseIndent) break
+        if (!cur.items.length || !cur.items.every(it => it.kind === 'text')) break
+        for (const atom of cur.items) {
+          const prev = runs.at(-1)
+          if (prev && prev.options.color === atom.color && prev.options.bold === !!atom.bold && prev.options.fontSize === pxToPt(atom.fontSize)) {
+            prev.text += atom.text
+          } else {
+            runs.push({
+              text: atom.text,
+              options: {
+                fontFace: PPTX_TITLE_FONT,
+                fontSize: pxToPt(atom.fontSize),
+                color: atom.color,
+                bold: !!atom.bold,
+              },
+            })
+          }
+        }
+        blockH += cur.ascent + cur.descent + cur.gapAfter
+        j++
+      }
+      const boxW = Math.max(40, maxWidth - baseIndent + 12)
+      const boxH = Math.max(24, blockH + 6)
+      if (runs.length) {
+        slide.addText(runs, {
+          x: inch(originX + baseIndent),
+          y: inch(originY + startY),
+          w: inch(boxW),
+          h: inch(boxH),
+          margin: 0,
+          valign: 'top',
+          wrap: true,
+          lineSpacingMultiple: 1.32,
+        })
+      }
+      y += blockH
+      i = j
+      continue
+    }
+
+    // 含公式的混排行：文字用原生文本框，仅公式用纯矢量小块透明 PNG
+    const baseline = y + line.ascent
+    let span = null
+    const flushSpan = () => {
+      if (!span) return
+      const textW = Math.min(SLIDE_W - originX - span.x - 16, Math.max(span.width + 14, span.fontSize * 1.2))
+      slide.addText(span.text, {
+        x: inch(originX + span.x),
+        y: inch(originY + baseline - span.fontSize * 0.92),
+        w: inch(Math.max(18, textW)),
+        h: inch(span.fontSize * 1.35),
+        fontFace: PPTX_TITLE_FONT,
+        fontSize: pxToPt(span.fontSize),
+        bold: !!span.bold,
+        color: span.color,
+        margin: 0,
+        valign: 'middle',
+        wrap: false,
+      })
+      span = null
+    }
+
+    for (const item of line.items) {
+      if (item.kind === 'text') {
+        if (span && span.color === item.color && span.bold === !!item.bold && span.fontSize === item.fontSize) {
+          span.text += item.text
+          span.width += item.width
+        } else {
+          flushSpan()
+          span = { x: item.x, width: item.width, text: item.text, color: item.color, bold: !!item.bold, fontSize: item.fontSize }
+        }
+      } else if (item.kind === 'inline-math') {
+        flushSpan()
+        const top = baseline - item.ascent
+        const png = renderMathSvgToPng(item.metrics, item.drawWidth, item.drawHeight)
+        slide.addImage({
+          data: `data:image/png;base64,${Buffer.from(png).toString('base64')}`,
+          x: inch(originX + item.x + 1),
+          y: inch(originY + top),
+          w: inch(item.drawWidth),
+          h: inch(item.drawHeight),
+        })
+      }
+    }
+    flushSpan()
+    y = baseline + line.descent + line.gapAfter
+    i++
+  }
+}
+
+function drawScenePptx(pptx, slide, items, fontFiles = [], { skipBgImage = false, rasterizeText = false } = {}) {
   const inch = v => v / PX_PER_IN
   const textItems = []
   for (const item of items) {
@@ -1257,17 +1465,41 @@ function drawScenePptx(pptx, slide, items, fontFiles = [], skipBgImage = false) 
         ...(item.stroke ? { line: { color: item.stroke, width: (item.strokeWidth ?? 1.5) * 0.75 } } : { line: { type: 'none' } }),
       })
     } else if (item.type === 'text') {
-      textItems.push(item)
+      if (rasterizeText) {
+        textItems.push(item)
+      } else {
+        const lines = item.lines ?? [item.text]
+        slide.addText(lines.join('\n'), {
+          x: inch(item.x),
+          y: inch(item.y),
+          w: inch(item.w),
+          h: inch(item.h),
+          fontFace: PPTX_TITLE_FONT,
+          fontSize: pxToPt(item.size),
+          bold: !!item.bold,
+          color: item.color,
+          align: item.align ?? 'left',
+          valign: item.valign ?? 'middle',
+          margin: 0,
+          wrap: true,
+          ...(item.lineHeight && item.size ? { lineSpacingMultiple: Number((item.lineHeight / item.size).toFixed(2)) } : {}),
+        })
+      }
     } else if (item.type === 'image') {
-      const png = renderSvgToPng(item.page.svg, item.page.width * 2, fontFiles)
-      slide.addImage({
-        data: `data:image/png;base64,${Buffer.from(png).toString('base64')}`,
-        x: inch(item.x), y: inch(item.y), w: inch(item.page.width), h: inch(item.page.height),
-      })
+      if (rasterizeText) {
+        const svg = item.page.getSvg ? item.page.getSvg() : item.page.svg
+        const png = renderSvgToPng(svg, item.page.width * 2, fontFiles)
+        slide.addImage({
+          data: `data:image/png;base64,${Buffer.from(png).toString('base64')}`,
+          x: inch(item.x), y: inch(item.y), w: inch(item.page.width), h: inch(item.page.height),
+        })
+      } else {
+        drawRichPagePptx(slide, item.page, item.x, item.y)
+      }
     }
   }
-  if (textItems.length) {
-    // 合并整页文字为一个透明 2× 图层，既保证内置字体跨平台一致又减少 Resvg 调用次数
+  if (rasterizeText && textItems.length) {
+    // 可选全图片化模式：合并整页文字为一个透明 2× 图层
     const padX = 4
     const padY = 8
     const minX = Math.max(0, Math.floor(Math.min(...textItems.map(it => it.x)) - padX))
@@ -1307,7 +1539,8 @@ function sceneToSvg(items, theme) {
     } else if (item.type === 'text') {
       parts.push(...textItemToSvgElements(item))
     } else if (item.type === 'image') {
-      const inner = item.page.svg.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '')
+      const svg = item.page.getSvg ? item.page.getSvg() : item.page.svg
+      const inner = svg.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '')
       parts.push(`<g transform="translate(${item.x}, ${item.y})">${inner}</g>`)
     }
   }
@@ -1322,7 +1555,18 @@ function sceneToSvg(items, theme) {
 function renderSvgToPng(svg, widthPx, fontFiles = []) {
   return new Resvg(svg, {
     fitTo: { mode: 'width', value: Math.max(1, Math.round(widthPx)) },
-    font: { loadSystemFonts: true, ...(fontFiles.length ? { fontFiles } : {}) },
+    // 已内置完整中英文字体时关闭系统字体扫描，避免 200+ 页大试卷反复枚举系统字体导致超时或内存飙升
+    font: { loadSystemFonts: fontFiles.length === 0, ...(fontFiles.length ? { fontFiles } : {}) },
+  }).render().asPng()
+}
+
+function renderMathSvgToPng(metrics, drawWidth, drawHeight) {
+  const w = Math.max(2, Number(drawWidth) || 24)
+  const h = Math.max(2, Number(drawHeight) || 16)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w.toFixed(1)}" height="${h.toFixed(1)}" viewBox="${metrics.viewBox}" overflow="visible">${metrics.inner}</svg>`
+  return new Resvg(svg, {
+    fitTo: { mode: 'width', value: Math.max(4, Math.round(w * 2)) },
+    font: { loadSystemFonts: false },
   }).render().asPng()
 }
 
@@ -1398,6 +1642,7 @@ function layoutBlocksToLines(blocks, maxWidth, fontSize, defaultColor) {
   const lines = []
   const lineGap = Math.round(fontSize * 0.42)
   const paraGap = Math.round(fontSize * 0.5)
+  let nextParaId = 0
 
   for (const [blockIdx, block] of blocks.entries()) {
     const color = stripHash(block.color ?? defaultColor)
@@ -1412,6 +1657,7 @@ function layoutBlocksToLines(blocks, maxWidth, fontSize, defaultColor) {
     for (const [pIdx, para] of paragraphs.entries()) {
       const trimmed = para.trim()
       if (!trimmed && !(pIdx === 0 && block.label)) continue
+      const paraId = ++nextParaId
 
       const atoms = []
       if (pIdx === 0 && block.label) {
@@ -1464,7 +1710,7 @@ function layoutBlocksToLines(blocks, maxWidth, fontSize, defaultColor) {
 
       const pushLine = (extraBottom = lineGap) => {
         if (!curItems.length) return
-        lines.push({ items: curItems, ascent: curAscent, descent: curDescent, gapAfter: extraBottom })
+        lines.push({ items: curItems, ascent: curAscent, descent: curDescent, gapAfter: extraBottom, paraId, indent })
         curItems = []
         curX = indent
         curAscent = fontSize * 0.9
@@ -1485,6 +1731,8 @@ function layoutBlocksToLines(blocks, maxWidth, fontSize, defaultColor) {
             ascent: dh,
             descent: 0,
             gapAfter: Math.round(fontSize * 0.45),
+            paraId: ++nextParaId,
+            indent,
           })
           continue
         }
@@ -1544,6 +1792,24 @@ function renderLinesToSvg(lines, maxWidth) {
   }
 }
 
+function buildRichPage(lines, maxWidth) {
+  let y = 4
+  for (const line of lines) {
+    y += line.ascent + line.descent + line.gapAfter
+  }
+  const height = Math.max(40, Math.ceil(y + 4))
+  let cachedSvg = null
+  return {
+    width: maxWidth,
+    height,
+    lines,
+    getSvg() {
+      if (cachedSvg === null) cachedSvg = renderLinesToSvg(lines, maxWidth).svg
+      return cachedSvg
+    },
+  }
+}
+
 function composeRichPages(blocks, { maxWidth = 1160, maxHeight = 520, preferredFontSize = 23, minFontSize = 16, defaultColor = '1F2937' }) {
   // 1) 优先尝试适度缩小字号让单页放得下
   const candidates = []
@@ -1556,7 +1822,7 @@ function composeRichPages(blocks, { maxWidth = 1160, maxHeight = 520, preferredF
     const totalH = lines.reduce((sum, line) => sum + line.ascent + line.descent + line.gapAfter, 8)
     chosenLines = lines
     if (totalH <= maxHeight) {
-      return [renderLinesToSvg(lines, maxWidth)]
+      return [buildRichPage(lines, maxWidth)]
     }
   }
 
@@ -1567,15 +1833,39 @@ function composeRichPages(blocks, { maxWidth = 1160, maxHeight = 520, preferredF
   for (const line of chosenLines ?? []) {
     const lineH = line.ascent + line.descent + line.gapAfter
     if (bucket.length && bucketH + lineH > maxHeight) {
-      pages.push(renderLinesToSvg(bucket, maxWidth))
+      pages.push(buildRichPage(bucket, maxWidth))
       bucket = []
       bucketH = 8
     }
     bucket.push(line)
     bucketH += lineH
   }
-  if (bucket.length) pages.push(renderLinesToSvg(bucket, maxWidth))
-  return pages.length ? pages : [renderLinesToSvg([], maxWidth)]
+  if (bucket.length) pages.push(buildRichPage(bucket, maxWidth))
+  return pages.length ? pages : [buildRichPage([], maxWidth)]
+}
+
+function extractLatexErrorSummary(compileLog, nativeLog, texBaseName = '') {
+  const source = `${compileLog || ''}\n${nativeLog || ''}`
+  const lines = source.split(/\r?\n/)
+  const escapedTex = texBaseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const fileLineRe = escapedTex ? new RegExp(`${escapedTex}:\\d+:`, 'i') : /\.tex:\d+:/i
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    if (line.startsWith('! ') || fileLineRe.test(line)) {
+      const snippet = [line]
+      for (let k = i + 1; k < Math.min(lines.length, i + 4); k++) {
+        const next = lines[k].trim()
+        if (!next) break
+        if (/^l\.\d+|^<|^\s*See the |not found|Undefined|Missing|Emergency/i.test(next) || snippet.length < 2) {
+          snippet.push(next)
+        }
+      }
+      return snippet.join(' | ').slice(0, 320)
+    }
+  }
+  const fallback = lines.map(l => l.trim()).filter(l => /Error|Fatal|not found|Emergency stop/i.test(l)).slice(0, 2)
+  return fallback.join(' | ').slice(0, 320)
 }
 
 // ============================================================================

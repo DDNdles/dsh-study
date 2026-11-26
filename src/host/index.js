@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import Schema from '@deepseek-ai/schemastery'
 import { createDatabase } from './db.js'
+import { serializeError } from './errors.js'
 import { FeedbackService } from './feedback.js'
 import { LatexEnvService } from './latex-env.js'
 import { MistakeService } from './mistakes.js'
@@ -316,11 +317,7 @@ export async function apply(ctx, input = {}) {
     } catch (error) {
       return {
         ok: false,
-        error: {
-          code: error.code ?? 'study/error',
-          message: error instanceof Error ? error.message : String(error),
-          details: {},
-        },
+        error: serializeError(error, endpoint),
       }
     }
   })

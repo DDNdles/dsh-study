@@ -8,7 +8,7 @@ import { runProcess } from './process.js'
 
 const FALLBACK_TINYTEX_TAG = 'v2026.11'
 const REQUIRED_TEX_PACKAGES = [
-  'ctex', 'xecjk', 'zhnumber', 'fandol', 'exam-zh',
+  'ctex', 'xecjk', 'zhnumber', 'fandol',
   'environ', 'needspace', 'eso-pic', 'lastpage',
   'enumitem', 'booktabs', 'fancyhdr', 'pgf',
   'unicode-math', 'fontspec', 'l3packages', 'l3kernel',

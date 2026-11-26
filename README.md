@@ -40,7 +40,7 @@
 | **通道二：大模型协作助手** | 对话输入框 `/study` | **深度协作** | 自然语言定制出卷、分析薄弱点、文字/截图录错题（草稿确认后入库）、为每道题撰写红字易错点评并导出 PDF / PPT |
 
 - 两条通道共用同一套本地 SQLite FTS5 索引、SM-2 复习调度与 PDF / PPT 渲染引擎。
-- `/study` 弹出快捷菜单（智能定制出卷、录入错题、错题复盘与巩固出卷、制作讲评 PPT、查看本地题库状态、打开「学习」工作台），背后静默注入协作规范并暴露 26 个 `study_*` 原生工具，不向 `/` 技能区增加多余噪音。
+- `/study` 弹出快捷菜单（智能定制出卷、录入错题、错题复盘与巩固出卷、制作讲评 PPT、查看本地题库状态、打开「学习」工作台），背后静默注入协作规范并暴露 6 个精简 `study_*` 原生工具，不向 `/` 技能区增加多余噪音。
 
 <img alt="02" src=".github/assets/route-02.svg" width="100%" />
 
@@ -56,7 +56,7 @@
 
 ### 安装插件
 
-可直接从 [Releases](https://github.com/DDNdles/dsh-study/releases) 下载最新 `dsh-study-0.1.8.tgz`，或从源码自行构建：
+可直接从 [Releases](https://github.com/DDNdles/dsh-study/releases) 下载最新 `dsh-study-0.1.9.tgz`，或从源码自行构建：
 
 ```bash
 git clone https://github.com/DDNdles/dsh-study.git
@@ -69,12 +69,12 @@ npm pack
 **方式一：DeepSeek Harness 安装**
 
 ```bash
-dsh plugin add ./dsh-study-0.1.8.tgz
+dsh plugin add ./dsh-study-0.1.9.tgz
 ```
 
 **方式二：词元工坊安装**
 
-在词元工坊左侧或设置中打开「插件管理」，选择本地安装 `.tgz` 包（`dsh-study-0.1.8.tgz`）；或在桌面端完全退出后通过命令行写入 `desktop` profile。
+在词元工坊左侧或设置中打开「插件管理」，选择本地安装 `.tgz` 包（`dsh-study-0.1.9.tgz`）；或在桌面端完全退出后通过命令行写入 `desktop` profile。
 
 安装完成后，请从系统托盘**完全退出并重启客户端**：
 1. 在左侧边栏打开 **「学习」 → 「题库管理」**，按需勾选课程同步到本地即可离线使用。
@@ -88,8 +88,8 @@ dsh plugin add ./dsh-study-0.1.8.tgz
 | 模板 ID | 格式 | 名称 | 特性说明 |
 | --- | --- | --- | --- |
 | `ustc-exam`（默认） | PDF | 高校标准考试卷（中科大版式） | 奇数页装订线、动态得分表、黑体解/证明、红色点评块；支持「题目后附解析」与「原题与答案分开」两种版式 |
-| `gaokao` | PDF | 全国标准考试卷（高考版式） | 卷头注意事项、大题赋分、连续编号；同样支持解析版与分开版 |
-| `review-classic` | PPTX | 经典讲评 PPT | 16:9 宽屏，封面扁平多边形 + 内页流线型题目进度轨道与素雅底纹；`mathjax-full` 行内矢量公式混排、长解析自动分页不截断；内置 OFL 静态字体（`Noto Sans SC` + `Space Grotesk`），跨平台视觉一致 |
+| `gaokao` | PDF | 全国标准考试卷（高考版式） | 基于标准 `ctexart`（零第三方 `exam-zh` 依赖），卷头注意事项、大题赋分、连续编号；同样支持解析版与分开版 |
+| `review-classic` | PPTX | 经典讲评 PPT | 16:9 宽屏，封面扁平多边形 + 内页流线型题目进度轨道与素雅底纹；默认保留可编辑原生文本层，仅数学公式使用 `mathjax-full` 高清矢量混排（亦提供 `rasterizeText` 可选开关）；长解析自动分页不截断 |
 
 - **自定义模板扩展**：可在本地数据目录 `~/.dsh/dsh-study/templates/{pdf,ppt}/<template_id>/` 放入 `template.json`（及 `.tex` 模板）扩展自定义版式，无需改动插件源码。
 - **演讲者备注**：导出 PPTX 时自动将题目出处、知识点、难度、答案来源与完整解析写入 Speaker Notes，保持幻灯片页面干净克制。
@@ -134,7 +134,7 @@ dsh-study/
 │       ├── papers.js             # 条件组卷、自定义挑题、分值/顺序调整与点评更新
 │       ├── latex-env.js          # XeLaTeX 多路径自动检测与轻量 TinyTeX 一键安装
 │       ├── render.js             # XeLaTeX PDF / 可打印 HTML / PPTX + MathJax 矢量混排引擎
-│       └── tools.js              # 26 个 study_* 原生大模型工具
+│       └── tools.js              # 6 个精简 study_* 原生大模型工具
 ├── templates/
 │   ├── pdf/{ustc-exam,gaokao}/   # 内置 PDF 试卷 LaTeX 模板
 │   └── ppt/review-classic/       # 内置讲评 PPT 模板、素雅底图、极简图标与 OFL 静态字体
@@ -142,22 +142,20 @@ dsh-study/
 ├── skills/dsh-study/SKILL.md     # 通道二大模型协作规范
 ├── examples/sample-bank/         # 自建题库最小原创模板与 SHA-256 刷新脚本
 ├── scripts/build.mjs             # esbuild 打包脚本
-└── tests/core.test.js            # 14 项端到端核心单测（同步、校验、跨源检测、中文搜索、题目反馈、文件交付、大题清洗、错题、组卷、LaTeX 检测、PDF/PPT 渲染）
+└── tests/core.test.js            # 端到端核心单测（同步、校验、跨源检测、中文搜索、题目反馈、文件交付、大题清洗、错题、组卷、LaTeX 检测、PDF/PPT 文本层渲染、6 工具集成）
 ```
 
 <details>
-<summary>展开查看 26 个内置大模型工具（study_*）一览</summary>
+<summary>展开查看 6 个内置大模型工具（study_*）一览</summary>
 
-| 分类 | 工具名 | 作用 |
-| --- | --- | --- |
-| 题库与检索 | `study_source_list` / `study_source_add` / `study_source_sync` | 查看、添加与同步题库源 |
-| 题库与检索 | `study_taxonomy_list` / `study_question_search` / `study_question_get` | 查询真实知识点树、FTS5 检索与读取单题详情 |
-| 错题与复习 | `study_mistake_mark` / `study_mistake_list` / `study_mistake_review` | 标记错题、查询待复习列表与 SM-2 打卡 |
-| 错题录入门控 | `study_mistake_ingest_draft` / `study_mistake_draft_list` / `study_mistake_commit` | 暂存录题草稿，经用户显式确认后落盘 |
-| 组卷与点评 | `study_paper_assemble_mistakes` / `study_paper_assemble_exam` / `study_paper_assemble_custom` | 按错题、条件/大题蓝图或精选列表组卷 |
-| 试卷维护 | `study_paper_get` / `study_paper_list` / `study_paper_items_update` / `study_paper_comment_update` | 读取试卷、调整顺序与分值、撰写针对性红字点评 |
-| AI 变式门控 | `study_paper_variant_propose` / `study_paper_variant_commit` | 默认关闭；显式开启并确认后方可写入 AI 变式题 |
-| 模板与导出 | `study_template_list` / `study_export_render` | 列出内置/自定义模板并导出 PDF、HTML 或 PPTX |
+| 工具名 | 作用 |
+| --- | --- |
+| `study_bank` | 查看题库源/课程/模板/LaTeX 环境（`status`）、查知识点树（`taxonomy`）、同步课程（`sync`）、添加题库源（`add_source`）、安装轻量 TinyTeX（`install_latex`） |
+| `study_search` | 按关键词/课程/知识点/题型/难度/年份检索题库，或按 `source_id + question_id` 读取单题详情 |
+| `study_mistake` | 错题本列表（`list`）、标记已有题（`mark`）、一步录入新错题（`add`）、复习打卡（`review`）、删除（`delete`） |
+| `study_paper` | 条件/蓝图组卷（`assemble`）、错题巩固组卷（`assemble_mistakes`）、自定义选题（`assemble_custom`）、查卷（`get`/`list`）、调分顺序（`update_items`）、批量点评（`update_comments`）、添加 AI 变式（`add_variant`） |
+| `study_export` | 导出 PDF（`ustc-exam` / `gaokao`）或讲评 PPTX（`review-classic`，默认保留可编辑文本层），自动保存到工作区并挂载可点击文件卡片 |
+| `study_feedback` | 提交题目纠错反馈并生成预填 Issue 链接或直推提交 |
 | 环境依赖 | `study_env_check` / `study_env_install_latex` | 自动检测本机/托管 `xelatex` 状态，经用户确认后一键安装轻量 TinyTeX |
 | 题目反馈 | `study_question_feedback` | 提交题目纠错反馈并生成预填 GitLab/GitHub Issue 链接（支持可选 Webhook 直推） |
 

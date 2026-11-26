@@ -355,7 +355,7 @@ export function apply(ctx) {
     if (result && typeof result === 'object' && 'ok' in result) {
       if (!result.ok) {
         const error = result.error ?? {}
-        const failure = new Error(friendlyError(error.message ?? '请求失败，请稍后重试'))
+        const failure = new Error(friendlyError(error))
         failure.code = error.code
         throw failure
       }
@@ -1271,34 +1271,42 @@ export function apply(ctx) {
           : null,
 
         isPpt
-          ? h(React.Fragment, null,
-            h('div', { className: 'dsh-study-slide-stage' },
-              curSlide
-                ? h('img', { src: fileUrl(curSlide.thumbnail_path), alt: curSlide.title })
-                : h('div', { className: 'dsh-study-muted' }, '正在加载幻灯片预览…')),
-            slidesManifest?.slides?.length
-              ? h('div', { className: 'dsh-study-between' },
-                h('span', { className: 'dsh-study-muted' }, `第 ${slideIndex + 1} / ${slidesManifest.slides.length} 页 · ${curSlide?.title ?? ''}`),
-                h('div', { className: 'dsh-study-row' },
-                  h('button', {
-                    type: 'button', className: 'dsh-study-btn sm', disabled: slideIndex <= 0,
-                    onClick: () => setSlideIndex(i => Math.max(0, i - 1)),
-                  }, '上一页'),
-                  h('button', {
-                    type: 'button', className: 'dsh-study-btn sm', disabled: slideIndex >= slidesManifest.slides.length - 1,
-                    onClick: () => setSlideIndex(i => Math.min(slidesManifest.slides.length - 1, i + 1)),
-                  }, '下一页')))
-              : null,
-            slidesManifest?.slides?.length
-              ? h('div', { className: 'dsh-study-thumbs' },
-                slidesManifest.slides.map((sl, idx) => h('button', {
-                  key: idx, type: 'button', className: 'dsh-study-thumb',
-                  'aria-current': idx === slideIndex,
-                  onClick: () => setSlideIndex(idx),
-                },
-                h('img', { src: fileUrl(sl.thumbnail_path), alt: sl.title }),
-                h('span', null, `${idx + 1}. ${sl.title}`))))
-              : null)
+          ? (() => {
+            const allSlides = slidesManifest?.slides ?? []
+            const previewSlides = allSlides.filter(sl => Boolean(sl.thumbnail_path))
+            const activeSlide = previewSlides[slideIndex] ?? previewSlides[0]
+            return h(React.Fragment, null,
+              h('div', { className: 'dsh-study-slide-stage' },
+                activeSlide
+                  ? h('img', { src: fileUrl(activeSlide.thumbnail_path), alt: activeSlide.title })
+                  : h('div', { className: 'dsh-study-muted' }, '正在加载幻灯片预览…')),
+              previewSlides.length
+                ? h('div', { className: 'dsh-study-between' },
+                  h('span', { className: 'dsh-study-muted' },
+                    allSlides.length > previewSlides.length
+                      ? `第 ${slideIndex + 1} / ${previewSlides.length} 页预览（完整 PPT 共 ${allSlides.length} 页，请下载查看全部） · ${activeSlide?.title ?? ''}`
+                      : `第 ${slideIndex + 1} / ${previewSlides.length} 页 · ${activeSlide?.title ?? ''}`),
+                  h('div', { className: 'dsh-study-row' },
+                    h('button', {
+                      type: 'button', className: 'dsh-study-btn sm', disabled: slideIndex <= 0,
+                      onClick: () => setSlideIndex(i => Math.max(0, i - 1)),
+                    }, '上一页'),
+                    h('button', {
+                      type: 'button', className: 'dsh-study-btn sm', disabled: slideIndex >= previewSlides.length - 1,
+                      onClick: () => setSlideIndex(i => Math.min(previewSlides.length - 1, i + 1)),
+                    }, '下一页')))
+                : null,
+              previewSlides.length
+                ? h('div', { className: 'dsh-study-thumbs' },
+                  previewSlides.map((sl, idx) => h('button', {
+                    key: idx, type: 'button', className: 'dsh-study-thumb',
+                    'aria-current': idx === slideIndex,
+                    onClick: () => setSlideIndex(idx),
+                  },
+                  h('img', { src: fileUrl(sl.thumbnail_path), alt: sl.title }),
+                  h('span', null, `${idx + 1}. ${sl.title}`))))
+                : null)
+          })()
           : h('iframe', { className: 'dsh-study-frame', src: iframeSrc, title: '试卷预览' }),
 
         state.exports.length > 1
@@ -2252,7 +2260,26 @@ function normalizeExportRow(row) {
 }
 
 function friendlyError(error) {
-  const raw = error instanceof Error ? error.message : String(error ?? '操作失败')
+  let raw = '操作失败'
+  if (typeof error === 'string') {
+    raw = error.trim() || raw
+  } else if (error instanceof Error) {
+    raw = error.message || error.name || raw
+  } else if (error && typeof error === 'object') {
+    const picked = [error.message, error.error?.message, error.detail, error.reason]
+      .find(v => typeof v === 'string' && v.trim())
+    if (picked) {
+      raw = error.stage ? `[${error.stage}] ${picked.trim()}` : picked.trim()
+    } else {
+      try {
+        const serialized = JSON.stringify(error)
+        if (serialized && serialized !== '{}') raw = serialized.slice(0, 400)
+      } catch {}
+    }
+  } else if (error != null) {
+    const text = String(error)
+    if (text && text !== '[object Object]') raw = text
+  }
   if (/SHA-256 mismatch/i.test(raw)) return '题库文件校验未通过，已取消安装以保护本地数据'
   if (/Fetch failed/i.test(raw)) return '网络连接失败，请检查网络或配置下载加速镜像后重试'
   if (/ENOENT/i.test(raw)) return '未找到指定目录或 manifest.json 文件，请检查路径是否正确'

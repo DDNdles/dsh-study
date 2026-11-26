@@ -12,7 +12,8 @@ import { MistakeService, scheduleReview } from '../src/host/mistakes.js'
 import { PaperService } from '../src/host/papers.js'
 import { cleanSectionTitle, RenderService } from '../src/host/render.js'
 import { SourceService } from '../src/host/sources.js'
-import { materializeDeliverables, questionDetails, searchQuestions } from '../src/host/tools.js'
+import { serializeError } from '../src/host/errors.js'
+import { materializeDeliverables, questionDetails, registerTools, searchQuestions } from '../src/host/tools.js'
 import { assertManifest, assertQuestion } from '../src/host/validation.js'
 
 const projectRoot = path.resolve(import.meta.dirname, '..')
@@ -596,4 +597,165 @@ test('cleanSectionTitle strips redundant numbering and score annotations while k
   assert.equal(cleanSectionTitle('二. 计算与解答题 (共30分, 每小题10分)', 'solve'), '计算与解答题')
   assert.equal(cleanSectionTitle('第一部分：单项选择题（共 4 小题，每题 5 分）', 'single'), '单项选择题')
   assert.equal(cleanSectionTitle('微积分（极限与连续）', 'solve'), '微积分（极限与连续）')
+})
+
+test('registerTools exposes exactly 6 simplified study_* tools without confirmation gates and serializes errors cleanly', async t => {
+  const { directory, db, sources } = await setup(t)
+  const sourceRoot = path.join(directory, 'bank-tools')
+  await makeBank(sourceRoot)
+  await sources.add({ source_id: 'bank-a', transport: 'local-dir', location: sourceRoot })
+  await sources.sync('bank-a', ['MATH1006'])
+
+  const mistakes = new MistakeService({ db, dataDir: directory })
+  const feedback = new FeedbackService({ db })
+  const papers = new PaperService({ db })
+  const latexEnv = new LatexEnvService({ dataDir: directory, subprocess: createSubprocessService() })
+  const render = new RenderService({ db, dataDir: directory, subprocess: createSubprocessService(), bundleRoot: projectRoot, latexEnv })
+  const config = { dataDir: directory, xelatexBin: 'xelatex', defaultPdfTemplate: 'ustc-exam', defaultPdfMode: 'inline-solution', defaultPptTemplate: 'review-classic', mirrorBaseUrl: '' }
+
+  const registered = new Map()
+  const mockCtx = {
+    effect: fn => fn(),
+    tools: {
+      register: def => {
+        registered.set(def.name, def)
+        return () => registered.delete(def.name)
+      },
+    },
+  }
+  registerTools(mockCtx, { db, sources, mistakes, feedback, papers, render, latexEnv, config })
+
+  assert.deepEqual([...registered.keys()].sort(), [
+    'study_bank', 'study_export', 'study_feedback', 'study_mistake', 'study_paper', 'study_search',
+  ])
+
+  const statusRes = await registered.get('study_bank').execute({ action: 'status', course_codes: ['MATH1006'] })
+  assert.equal(statusRes.ok, true)
+  assert.ok(Array.isArray(statusRes.data.sources))
+  assert.ok(Array.isArray(statusRes.data.templates))
+  assert.ok(Array.isArray(statusRes.data.taxonomy))
+
+  // One-step mistake add without draft/regex confirmation gate
+  const addedMistake = await registered.get('study_mistake').execute({
+    action: 'add',
+    question: question('MATH1006-one-step', 'One-step mistake question.'),
+    error_tags: ['计算'],
+  })
+  assert.equal(addedMistake.ok, true)
+  assert.equal(addedMistake.data.source_id, 'local-personal')
+
+  // One-step assemble + AI variant without double-gate lock
+  const assembled = await registered.get('study_paper').execute({
+    action: 'assemble', course_codes: ['MATH1006'], count: 1, title: '工具精简测试卷',
+  })
+  assert.equal(assembled.ok, true)
+  const variantRes = await registered.get('study_paper').execute({
+    action: 'add_variant',
+    paper_id: assembled.data.paper_id,
+    question: question('MATH1006-var1', 'Variant stem.'),
+    score: 12,
+  })
+  assert.equal(variantRes.ok, true)
+  assert.equal(variantRes.data.question.answer.origin, 'ai')
+
+  // Error serialization never produces [object Object]
+  const missingPaper = await registered.get('study_export').execute({ paper_id: 'non-existent', format: 'ppt' })
+  assert.equal(missingPaper.ok, false)
+  assert.ok(missingPaper.error.message && !missingPaper.error.message.includes('[object Object]'))
+  assert.equal(serializeError({ code: 'E_CUSTOM', message: '自定义对象错误' }).message, '[E_CUSTOM] 自定义对象错误')
+  assert.notEqual(serializeError({ foo: 'bar' }).message, '[object Object]')
+})
+
+test('PPTX exports real editable text layer by default and supports optional rasterizeText mode', async t => {
+  const { directory, db, sources } = await setup(t)
+  const sourceRoot = path.join(directory, 'bank-ppt')
+  await makeBank(sourceRoot, {
+    questions: [
+      question('MATH1006-p1', '验证极限并说明连续性：求函数极限值'),
+    ],
+  })
+  await sources.add({ source_id: 'bank-a', transport: 'local-dir', location: sourceRoot })
+  await sources.sync('bank-a', ['MATH1006'])
+
+  const papers = new PaperService({ db })
+  const paper = papers.assemble({ title: '文本层测试讲评', course_codes: ['MATH1006'], count: 1, seed: 7 })
+  const render = new RenderService({ db, dataDir: directory, subprocess: createSubprocessService(), bundleRoot: projectRoot })
+
+  const extractPptxTexts = async pptxPath => {
+    // pptx is a ZIP archive; inflate slide XMLs using PowerShell/Node zlib or JSZip bundled in pptxgenjs
+    const JSZip = (await import('jszip')).default
+    const zip = await JSZip.loadAsync(await fs.readFile(pptxPath))
+    const texts = []
+    for (const [name, entry] of Object.entries(zip.files)) {
+      if (!/^ppt\/slides\/slide\d+\.xml$/.test(name)) continue
+      const xml = await entry.async('string')
+      for (const m of xml.matchAll(/<a:t>([^<]+)<\/a:t>/g)) texts.push(m[1])
+    }
+    return texts
+  }
+
+  const normalPpt = await render.render({ paper_id: paper.paper_id, format: 'ppt', template_id: 'review-classic' })
+  assert.equal(normalPpt.status, 'ok')
+  const normalTexts = await extractPptxTexts(path.join(directory, normalPpt.artifacts.pptx))
+  assert.ok(normalTexts.length >= 5, `Expected native PPTX text runs, got ${normalTexts.length}`)
+  assert.ok(normalTexts.some(txt => txt.includes('文本层测试讲评')), 'Cover title should be real text')
+  assert.ok(normalTexts.some(txt => txt.includes('验证极限并说明连续性')), 'Question body should be real text')
+
+  const rasterPpt = await render.render({
+    paper_id: paper.paper_id, format: 'ppt', template_id: 'review-classic', options: { rasterizeText: true },
+  })
+  assert.equal(rasterPpt.status, 'ok')
+  const rasterTexts = await extractPptxTexts(path.join(directory, rasterPpt.artifacts.pptx))
+  assert.equal(rasterTexts.length, 0)
+})
+
+test('gaokao template compiles all question types without exam-zh and reports compile log on failure', async t => {
+  const { directory, db, sources } = await setup(t)
+  const sourceRoot = path.join(directory, 'bank-gk')
+  const choiceQ = {
+    ...question('MATH1006-gk1', '设函数 $f(x)=x^2$，则极限值为'),
+    type: 'single',
+    options: [
+      { key: 'A', md: '$0$', figures: [] },
+      { key: 'B', md: '$1$', figures: [] },
+      { key: 'C', md: '$2$', figures: [] },
+      { key: 'D', md: '$\\infty$', figures: [] },
+    ],
+    answer: { md: 'A', figures: [], origin: 'official', origin_detail: 'Official' },
+  }
+  await makeBank(sourceRoot, { questions: [choiceQ, question('MATH1006-gk2', '纯文本无公式计算题，求 1+1 的结果。')] })
+  await sources.add({ source_id: 'bank-a', transport: 'local-dir', location: sourceRoot })
+  await sources.sync('bank-a', ['MATH1006'])
+
+  const papers = new PaperService({ db })
+  const paper = papers.assemble({ title: '高考版式全题型测试', course_codes: ['MATH1006'], count: 2, seed: 3 })
+  const render = new RenderService({ db, dataDir: directory, subprocess: createSubprocessService(), bundleRoot: projectRoot })
+
+  const gkCombined = await render.render({
+    paper_id: paper.paper_id, format: 'pdf', template_id: 'gaokao', mode: 'split', options: { splitLayout: 'combined' },
+  })
+  assert.equal(gkCombined.status, 'ok', gkCombined.log)
+  const texContent = await fs.readFile(gkCombined.tex_paths[0], 'utf8')
+  assert.ok(texContent.includes('\\documentclass[a4paper,11pt]{ctexart}'))
+  assert.ok(!/\\documentclass[^}]*\{exam-zh\}/.test(texContent))
+  assert.ok((await fs.stat(path.join(directory, gkCombined.artifacts.inlinePdf))).size > 1000)
+
+  // Verify failed compilation keeps .tex/.log and includes log path & error excerpt in degraded_reason
+  const failingSubprocess = {
+    async resolveExecutable(cmd) { return cmd },
+    spawn() {
+      return {
+        stdout: null,
+        stderr: null,
+        done: Promise.resolve({ exitCode: 1, signal: null }),
+        terminate() {},
+      }
+    },
+  }
+  const failRender = new RenderService({ db, dataDir: directory, subprocess: failingSubprocess, bundleRoot: projectRoot })
+  const degraded = await failRender.render({ paper_id: paper.paper_id, format: 'pdf', template_id: 'gaokao', mode: 'inline-solution' })
+  assert.equal(degraded.status, 'degraded')
+  assert.ok(degraded.degraded_reason.includes('日志：'))
+  assert.ok(degraded.log_paths.length >= 1)
+  assert.ok(degraded.tex_paths.some(p => p.endsWith('first-attempt.tex')))
 })

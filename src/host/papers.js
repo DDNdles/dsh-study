@@ -270,6 +270,32 @@ export class PaperService {
     return [...selected].map(key => key.slice(key.indexOf('\0') + 1))
   }
 
+  addVariant({ paper_id, question, score = 10, section_title = 'AI 变式' }) {
+    const paper = this.db.prepare('SELECT paper_id FROM papers WHERE paper_id=?').get(paper_id)
+    if (!paper) throw new Error(`未找到指定试卷：${paper_id}`)
+    const variant = structuredClone(question)
+    variant.answer ??= { md: '', figures: [], origin: 'ai', origin_detail: 'AI-generated variant' }
+    variant.answer.origin = 'ai'
+    variant.answer.origin_detail = String(variant.answer.origin_detail || 'AI-generated variant')
+    variant.source ??= { kind: 'notes', batch: 'ai_variant', ref: 'AI 变式题', year: null, term: null, exam_kind: null, url: null, rights: 'original' }
+    variant.source.batch = 'ai_variant'
+    variant.quality ??= { quarantined: false, quarantine_reason: null, confidence: null, note: null, overlap_hint: null }
+    variant.quality.note = variant.quality.note || 'AI 变式题'
+    assertQuestion(variant)
+    let seq
+    transaction(this.db, () => {
+      const row = this.db.prepare('SELECT max(seq) AS value FROM paper_items WHERE paper_id=?').get(paper_id)
+      seq = (row.value ?? 0) + 1
+      this.db.prepare(`
+        INSERT INTO paper_items(paper_id,seq,section_index,section_title,sub_seq,source_id,question_id,
+          score,is_original_redo,is_ai_variant,question_snapshot_json)
+        VALUES(?,?,0,?,?,?,?,?,0,1,?)
+      `).run(paper_id, seq, String(section_title || 'AI 变式'), seq, 'local-ai-variant', variant.id, Number(score) || 10, JSON.stringify(variant))
+      this.db.prepare('UPDATE papers SET updated_at=? WHERE paper_id=?').run(new Date().toISOString(), paper_id)
+    })
+    return { paper_id, seq, question: variant }
+  }
+
   proposeVariant({ paper_id, question, score = 10 }, request = {}) {
     if (!this.allowAiVariants || request.allow_ai_variants !== true) {
       throw new Error('AI variants require both the global setting and explicit per-paper opt-in')
